@@ -1,7 +1,23 @@
 {
-  "name": "cloudmusic-cli",
+  "name": "@laoshuikaixue/cloudmusic-cli",
   "version": "0.1.0",
   "description": "A terminal-first NetEase Cloud Music player with spectrum visualization and AI tool support.",
+  "keywords": [
+    "netease-cloud-music",
+    "cli",
+    "tui",
+    "music-player",
+    "mcp"
+  ],
+  "author": "laoshuikaixue",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/laoshuikaixue/cloudmusic-cli.git"
+  },
+  "homepage": "https://github.com/laoshuikaixue/cloudmusic-cli#readme",
+  "bugs": {
+    "url": "https://github.com/laoshuikaixue/cloudmusic-cli/issues"
+  },
   "type": "module",
   "bin": {
     "ncm": "dist/cli.js"
@@ -30,6 +46,10 @@
   },
   "packageManager": "pnpm@10.29.3",
   "license": "AGPL-3.0-only",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
     "@neteasecloudmusicapienhanced/api": "4.36.1",
