@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { AudioPipeline } from '../audio/pipeline.js'
+import { scanLocalSongs } from '../audio/local-library.js'
 import { NeteaseApi } from '../api/netease.js'
 import { AppError } from '../core/errors.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
@@ -8,6 +9,7 @@ import { AppStore } from '../core/store.js'
 import { SmtcBridge, type SmtcEvent } from '../system/smtc.js'
 import type {
   AppConfig,
+  HistoryEntry,
   LyricLine,
   PlaybackStatus,
   QueueSnapshot,
@@ -42,6 +44,9 @@ export class PlayerDaemon {
   private readonly api = new NeteaseApi(() => this.store.getCookie())
   private readonly pipeline = new AudioPipeline()
   private queue: QueueSnapshot = { songs: [], index: -1 }
+  private history: HistoryEntry[] = []
+  private localSongs: Song[] = []
+  private activeHistorySong?: Song
   private config!: AppConfig
   private state: PlaybackStatus['state'] = 'idle'
   private source: SourceResult | null = null
@@ -76,6 +81,8 @@ export class PlayerDaemon {
     await this.store.load()
     this.config = this.store.getConfig()
     this.queue = await this.store.loadSession()
+    this.history = await this.store.loadHistory()
+    this.localSongs = await this.store.loadLocalLibrary()
     if (this.queue.index >= this.queue.songs.length) this.queue.index = this.queue.songs.length - 1
     this.pipeline.on('ended', () => void this.onEnded())
     this.pipeline.on('error', (error: Error) => {
@@ -114,14 +121,50 @@ export class PlayerDaemon {
     this.scrobbleLastTick = Date.now()
   }
 
+  private historyKey(song: Song) {
+    return song.localPath ? `local:${song.localPath.toLowerCase()}` : `netease:${song.id}`
+  }
+
+  private async finalizeHistory() {
+    const active = this.activeHistorySong
+    if (!active) return
+    const key = this.historyKey(active)
+    const entry = this.history.find((item) => this.historyKey(item.song) === key)
+    if (entry) entry.listenedSeconds += Math.max(0, Math.floor(this.scrobblePlayedSeconds))
+    this.activeHistorySong = undefined
+    await this.store.saveHistory(this.history)
+  }
+
+  private async recordHistory(song: Song) {
+    const key = this.historyKey(song)
+    this.history = [
+      { song, playedAt: Date.now(), listenedSeconds: 0, context: this.queue.context },
+      ...this.history.filter((item) => this.historyKey(item.song) !== key),
+    ].slice(0, 500)
+    this.activeHistorySong = song
+    await this.store.saveHistory(this.history)
+  }
+
   private async startSong(song: Song, offset = 0) {
+    await this.finalizeHistory()
     this.state = 'loading'
     this.error = undefined
     this.resetPlaybackCycle()
-    const [source, lyricResult] = await Promise.all([
-      this.api.resolveSource(song.id, this.config),
-      this.api.lyrics(song.id).catch(() => ({ lines: [], raw: null })),
-    ])
+    const [source, lyricResult] = song.localPath
+      ? [
+          {
+            url: song.localPath,
+            source: 'local' as const,
+            sourceName: 'local-file',
+            trial: false,
+            quality: song.quality || 'local',
+          },
+          { lines: [], raw: null },
+        ]
+      : await Promise.all([
+          this.api.resolveSource(song.id, this.config),
+          this.api.lyrics(song.id).catch(() => ({ lines: [], raw: null })),
+        ])
     this.source = source
     this.currentUrl = source.url
     this.sourceResolvedAt = Date.now()
@@ -133,6 +176,7 @@ export class PlayerDaemon {
       offset,
     })
     this.state = 'playing'
+    await this.recordHistory(song)
     void this.smtc.sync(this.status())
   }
 
@@ -180,6 +224,7 @@ export class PlayerDaemon {
 
   async stop() {
     await this.pipeline.stop()
+    await this.finalizeHistory()
     this.state = 'stopped'
     void this.smtc.sync(this.status())
     return this.status()
@@ -203,7 +248,16 @@ export class PlayerDaemon {
       0,
       Math.min(duration || Infinity, relative ? current + target : target),
     )
-    if (!this.currentUrl || Date.now() - this.sourceResolvedAt > 8 * 60 * 1000) {
+    if (song.localPath) {
+      this.currentUrl = song.localPath
+      this.source = {
+        url: song.localPath,
+        source: 'local',
+        sourceName: 'local-file',
+        trial: false,
+        quality: song.quality || 'local',
+      }
+    } else if (!this.currentUrl || Date.now() - this.sourceResolvedAt > 8 * 60 * 1000) {
       this.source = await this.api.resolveSource(song.id, this.config)
       this.currentUrl = this.source.url
       this.sourceResolvedAt = Date.now()
@@ -318,6 +372,36 @@ export class PlayerDaemon {
     return this.next()
   }
 
+  async playHistory(index = 0) {
+    return this.replaceQueue(
+      this.history.map((entry) => entry.song),
+      index,
+      { type: 'history', name: '最近播放' },
+    )
+  }
+
+  async scanLocal(input: string) {
+    const result = await scanLocalSongs(input, this.config.binaries.ffprobe || 'ffprobe')
+    const merged = new Map(
+      this.localSongs
+        .filter((song) => song.localPath)
+        .map((song) => [song.localPath!.toLowerCase(), song]),
+    )
+    for (const song of result.songs) merged.set(song.localPath!.toLowerCase(), song)
+    this.localSongs = [...merged.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    await this.store.saveLocalLibrary(this.localSongs)
+    return {
+      scanned: result.songs.length,
+      total: this.localSongs.length,
+      errors: result.errors,
+      songs: this.localSongs,
+    }
+  }
+
+  async playLocal(index = 0) {
+    return this.replaceQueue(this.localSongs, index, { type: 'local', name: '本地音乐' })
+  }
+
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
     const lyricIndex = findLyricIndex(this.lyrics, position)
@@ -352,7 +436,7 @@ export class PlayerDaemon {
     this.scrobbleLastTick = now
     if (this.state === 'playing') this.scrobblePlayedSeconds += elapsed
     const song = this.song
-    if (!this.config.scrobble.enabled || !song || !this.store.getCookie()) return
+    if (!this.config.scrobble.enabled || !song || song.localPath || !this.store.getCookie()) return
     if (this.scrobbledCycle === this.cycle) return
     const duration = song.duration / 1000
     if (duration <= 30) return
@@ -391,6 +475,7 @@ export class PlayerDaemon {
     if (this.smtcTimer) clearInterval(this.smtcTimer)
     this.smtc.stop()
     await this.pipeline.stop()
+    await this.finalizeHistory()
   }
 
   async dispatch(method: string, params: Record<string, unknown> = {}) {
@@ -554,6 +639,39 @@ export class PlayerDaemon {
         return this.trashCurrentFmSong()
       case 'library.liked.ids':
         return this.refreshLikedSongs()
+      case 'library.history':
+        return this.history
+      case 'library.history.play':
+        return this.playHistory(params.index === undefined ? 0 : numberParam(params.index, 'index'))
+      case 'library.history.clear':
+        this.history = []
+        this.activeHistorySong = undefined
+        await this.store.saveHistory(this.history)
+        return this.history
+      case 'library.history.remove': {
+        const index = numberParam(params.index, 'index')
+        if (index < 0 || index >= this.history.length) {
+          throw new AppError('INVALID_ARGUMENT', '历史索引超出范围')
+        }
+        this.history.splice(index, 1)
+        await this.store.saveHistory(this.history)
+        return this.history
+      }
+      case 'library.local':
+        return this.localSongs
+      case 'library.local.scan':
+        return this.scanLocal(stringParam(params.path, 'path'))
+      case 'library.local.play':
+        return this.playLocal(params.index === undefined ? 0 : numberParam(params.index, 'index'))
+      case 'library.local.remove': {
+        const index = numberParam(params.index, 'index')
+        if (index < 0 || index >= this.localSongs.length) {
+          throw new AppError('INVALID_ARGUMENT', '本地音乐索引超出范围')
+        }
+        this.localSongs.splice(index, 1)
+        await this.store.saveLocalLibrary(this.localSongs)
+        return this.localSongs
+      }
       case 'like': {
         const id = numberParam(params.id, 'id')
         const liked = params.liked !== false
@@ -628,6 +746,7 @@ export class PlayerDaemon {
       node: { ok: Number(process.versions.node.split('.')[0]) >= 20, version: process.version },
       mpv: inspect(this.config.binaries.mpv || 'mpv', '--version'),
       ffmpeg: inspect(this.config.binaries.ffmpeg || 'ffmpeg', '-version'),
+      ffprobe: inspect(this.config.binaries.ffprobe || 'ffprobe', '-version'),
       api: apiStatus,
       smtc: this.smtc.status(),
       paths: { config: this.store.getConfig() ? 'ready' : 'unavailable' },

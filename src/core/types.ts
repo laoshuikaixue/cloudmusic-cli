@@ -1,14 +1,7 @@
 export type PlaybackSource = 'official' | 'unblock' | 'trial' | 'local' | null
 export type PlaybackMode = 'sequence' | 'repeat-one' | 'shuffle'
 export type QueueContextType =
-  | 'manual'
-  | 'search'
-  | 'playlist'
-  | 'daily'
-  | 'fm'
-  | 'liked'
-  | 'history'
-  | 'local'
+  'manual' | 'search' | 'playlist' | 'daily' | 'fm' | 'liked' | 'history' | 'local'
 export type ScrobbleMode = 'ncbl' | 'legacy'
 
 export interface Artist {
@@ -133,7 +126,7 @@ export interface QueueSnapshot {
 
 export interface SourceResult {
   url: string
-  source: Exclude<PlaybackSource, null | 'local'>
+  source: Exclude<PlaybackSource, null>
   sourceName?: string
   trial: boolean
   quality?: string

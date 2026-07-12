@@ -113,6 +113,32 @@ const tools = [
     },
   },
   {
+    name: 'get_play_history',
+    description: '获取最近播放历史及实际收听时长。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'play_history',
+    description: '将最近播放历史作为队列播放。',
+    inputSchema: {
+      type: 'object',
+      properties: { index: { type: 'number', default: 0 } },
+    },
+  },
+  {
+    name: 'manage_local_music',
+    description: '列出、扫描或播放本地音乐库。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'scan', 'play'] },
+        path: { type: 'string' },
+        index: { type: 'number', default: 0 },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'set_playback_mode',
     description: '设置顺序、单曲循环或随机播放模式。',
     inputSchema: {
@@ -193,6 +219,16 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
             ? 'library.fm.play'
             : 'library.fm',
       )
+    }
+    case 'get_play_history':
+      return request('library.history')
+    case 'play_history':
+      return request('library.history.play', args)
+    case 'manage_local_music': {
+      const action = String(args.action)
+      if (action === 'scan') return request('library.local.scan', { path: args.path })
+      if (action === 'play') return request('library.local.play', { index: args.index })
+      return request('library.local')
     }
     case 'set_playback_mode':
       return request('mode.set', args)

@@ -289,6 +289,40 @@ library
     output(await withDaemon(options.play ? 'library.fm.play' : 'library.fm')),
   )
 library.command('fm-trash').action(async () => output(await withDaemon('library.fm.trash')))
+library
+  .command('history')
+  .option('--play', '播放最近播放列表')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon(options.play ? 'library.history.play' : 'library.history', {
+        index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('history-clear')
+  .action(async () => output(await withDaemon('library.history.clear')))
+library
+  .command('local')
+  .option('--play', '播放本地音乐库')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon(options.play ? 'library.local.play' : 'library.local', {
+        index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('local-scan <path>')
+  .description('扫描本地音乐文件或目录')
+  .action(async (path) => output(await withDaemon('library.local.scan', { path })))
+library
+  .command('local-remove <index>')
+  .action(async (index) =>
+    output(await withDaemon('library.local.remove', { index: Number(index) })),
+  )
 
 program
   .command('like <id>')

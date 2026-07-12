@@ -4,6 +4,7 @@ import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient } from '../ipc/client.js'
 import type {
   AppConfig,
+  HistoryEntry,
   PlaybackMode,
   PlaybackStatus,
   PlaylistSummary,
@@ -23,9 +24,13 @@ type PageMode =
   | 'playlists'
   | 'tracks'
   | 'settings'
+  | 'local-path'
 
 type LibrarySource =
-  { type: 'playlist'; id: number; name: string } | { type: 'daily'; name: string }
+  | { type: 'playlist'; id: number; name: string }
+  | { type: 'daily'; name: string }
+  | { type: 'history'; name: string }
+  | { type: 'local'; name: string }
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
   return requestDaemonResilient<T>(method, params)
@@ -241,14 +246,66 @@ export const NowPlaying = () => {
     }
   }
 
+  const openHistory = async () => {
+    setMessage('正在加载最近播放…')
+    try {
+      const entries = await callDaemon<HistoryEntry[]>('library.history')
+      setLibrarySongs(entries.map((entry) => entry.song))
+      setLibrarySource({ type: 'history', name: '最近播放' })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`最近播放 · ${entries.length} 首歌曲`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openLocal = async () => {
+    setMessage('正在加载本地音乐…')
+    try {
+      const songs = await callDaemon<Song[]>('library.local')
+      setLibrarySongs(songs)
+      setLibrarySource({ type: 'local', name: '本地音乐' })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(songs.length ? `本地音乐 · ${songs.length} 首` : '尚未扫描本地音乐，按 r 添加目录')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const submitLocalPath = async () => {
+    const path = inputValue.trim()
+    setInputValue('')
+    if (!path) return
+    setMessage(`正在扫描本地音乐：${path}`)
+    try {
+      const result = await callDaemon<{ songs: Song[]; scanned: number; errors: unknown[] }>(
+        'library.local.scan',
+        { path },
+      )
+      setLibrarySongs(result.songs)
+      setLibrarySource({ type: 'local', name: '本地音乐' })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`新增/更新 ${result.scanned} 首，失败 ${result.errors.length} 个文件`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const playLibrary = async (index: number) => {
     if (!librarySource || !librarySongs[index]) return
     setMessage(`正在加载：${songLabel(librarySongs[index])}`)
     try {
       if (librarySource.type === 'playlist') {
         await callDaemon('library.playlist.play', { id: librarySource.id, index })
-      } else {
+      } else if (librarySource.type === 'daily') {
         await callDaemon('library.daily.play', { index })
+      } else if (librarySource.type === 'history') {
+        await callDaemon('library.history.play', { index })
+      } else {
+        await callDaemon('library.local.play', { index })
       }
       await refreshQueue()
       setMode('normal')
@@ -381,14 +438,18 @@ export const NowPlaying = () => {
   }
 
   useInput((input, key) => {
-    if (mode === 'search' || mode === 'cookie') {
+    if (mode === 'search' || mode === 'cookie' || mode === 'local-path') {
       if (key.escape) {
         setInputValue('')
-        setMode('normal')
+        setMode(mode === 'local-path' ? 'tracks' : 'normal')
         return
       }
       if (key.return) {
-        void (mode === 'search' ? submitSearch() : submitCookie())
+        void (mode === 'search'
+          ? submitSearch()
+          : mode === 'cookie'
+            ? submitCookie()
+            : submitLocalPath())
         return
       }
       if (key.backspace || key.delete) {
@@ -433,11 +494,13 @@ export const NowPlaying = () => {
     if (mode === 'library') {
       if (key.escape || input === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(2, index + 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(4, index + 1))
       if (key.return) {
         if (libraryIndex === 0) void openPlaylists()
         if (libraryIndex === 1) void openDaily()
         if (libraryIndex === 2) void playFm()
+        if (libraryIndex === 3) void openHistory()
+        if (libraryIndex === 4) void openLocal()
       }
       return
     }
@@ -458,6 +521,10 @@ export const NowPlaying = () => {
         return setLibraryIndex((index) => Math.min(librarySongs.length - 1, index + 1))
       if (key.return && librarySongs[libraryIndex]) void playLibrary(libraryIndex)
       if (input === 'a' && librarySongs.length) void playLibrary(0)
+      if (input === 'r' && librarySource?.type === 'local') {
+        setInputValue('')
+        setMode('local-path')
+      }
       return
     }
 
@@ -578,6 +645,12 @@ export const NowPlaying = () => {
           <Text dimColor> 回车验证并保存，Esc 取消</Text>
         </Text>
       ) : null}
+      {mode === 'local-path' ? (
+        <Text>
+          本地音乐目录 › <Text color="cyan">{shownInput || '输入文件或目录路径'}█</Text>
+          <Text dimColor> 回车扫描，Esc 取消</Text>
+        </Text>
+      ) : null}
       {mode === 'results' ? (
         <>
           <Text bold>搜索结果（↑/↓ 选择，Enter 播放，/ 重新搜索）</Text>
@@ -613,7 +686,7 @@ export const NowPlaying = () => {
       {mode === 'library' ? (
         <>
           <Text bold>音乐库（↑/↓ 选择，Enter 打开，l/Esc 返回）</Text>
-          {['我的歌单', '每日推荐', '私人 FM'].map((label, index) => (
+          {['我的歌单', '每日推荐', '私人 FM', '最近播放', '本地音乐'].map((label, index) => (
             <Text key={label} color={index === libraryIndex ? 'cyan' : undefined}>
               {index === libraryIndex ? '▶ ' : '  '}
               {label}
@@ -638,7 +711,8 @@ export const NowPlaying = () => {
       {mode === 'tracks' ? (
         <>
           <Text bold>
-            {librarySource?.name || '歌曲列表'}（↑/↓ 选择，Enter 从此播放，a 播放全部，Esc 返回）
+            {librarySource?.name || '歌曲列表'}（↑/↓ 选择，Enter 从此播放，a 播放全部
+            {librarySource?.type === 'local' ? '，r 扫描目录' : ''}，Esc 返回）
           </Text>
           {visibleTracks.map((song, offset) => {
             const index = trackStart + offset
