@@ -13,6 +13,16 @@ export const runDaemonServer = async () => {
   await daemon.initialize()
   const subscribers = new Set<Socket>()
 
+  const writeSocket = (socket: Socket, value: string) => {
+    if (socket.destroyed || !socket.writable) return
+    try {
+      socket.write(value)
+    } catch {
+      subscribers.delete(socket)
+      socket.destroy()
+    }
+  }
+
   const server = createServer((socket) => {
     let buffer = ''
     socket.setEncoding('utf8')
@@ -38,7 +48,7 @@ export const runDaemonServer = async () => {
                 ? { subscribed: true }
                 : await daemon.dispatch(request.method, request.params)
             const response: RpcResponse = { id: request.id, ok: true, result }
-            socket.write(`${JSON.stringify(response)}\n`)
+            writeSocket(socket, `${JSON.stringify(response)}\n`)
             if (request.method === 'shutdown') {
               setTimeout(() => void close(), 20)
             }
@@ -49,7 +59,7 @@ export const runDaemonServer = async () => {
               ok: false,
               error: { code: appError.code, message: appError.message, details: appError.details },
             }
-            socket.write(`${JSON.stringify(response)}\n`)
+            writeSocket(socket, `${JSON.stringify(response)}\n`)
           }
         })()
       }
@@ -62,10 +72,12 @@ export const runDaemonServer = async () => {
     if (!subscribers.size) return
     const status = JSON.stringify({ event: 'status', data: daemon.status() })
     for (const socket of subscribers) {
-      socket.write(`${status}\n`)
-      void Promise.resolve(daemon.dispatch('spectrum')).then((data) => {
-        if (!socket.destroyed) socket.write(`${JSON.stringify({ event: 'spectrum', data })}\n`)
-      })
+      writeSocket(socket, `${status}\n`)
+      void Promise.resolve(daemon.dispatch('spectrum'))
+        .then((data) => {
+          writeSocket(socket, `${JSON.stringify({ event: 'spectrum', data })}\n`)
+        })
+        .catch(() => undefined)
     }
   }, 100)
 

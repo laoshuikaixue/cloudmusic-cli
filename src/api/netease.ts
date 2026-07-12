@@ -1,7 +1,15 @@
 import { createRequire } from 'node:module'
 import { AppError } from '../core/errors.js'
 import { mergeLyrics } from '../core/lyrics.js'
-import type { AppConfig, LyricLine, Song, SourceResult } from '../core/types.js'
+import type {
+  AppConfig,
+  LyricLine,
+  PlaylistSummary,
+  QueueContext,
+  ScrobbleMode,
+  Song,
+  SourceResult,
+} from '../core/types.js'
 
 const require = createRequire(import.meta.url)
 process.env.DOTENV_CONFIG_QUIET ??= 'true'
@@ -40,6 +48,21 @@ export const normalizeSong = (raw: any): Song => {
     fee: Number(raw?.fee || 0),
   }
 }
+
+export const normalizePlaylist = (raw: any): PlaylistSummary => ({
+  id: Number(raw?.id),
+  name: String(raw?.name || '未命名歌单'),
+  cover: raw?.coverImgUrl || raw?.picUrl,
+  trackCount: Number(raw?.trackCount || raw?.trackIds?.length || raw?.tracks?.length || 0),
+  description: raw?.description ? String(raw.description) : undefined,
+  creator: raw?.creator
+    ? {
+        id: Number.isFinite(Number(raw.creator.userId)) ? Number(raw.creator.userId) : undefined,
+        name: String(raw.creator.nickname || '未知用户'),
+      }
+    : undefined,
+  subscribed: Boolean(raw?.subscribed),
+})
 
 export class NeteaseApi {
   constructor(private readonly getCookie: () => string) {}
@@ -217,16 +240,47 @@ export class NeteaseApi {
     }
   }
 
+  private async currentUserId() {
+    const status = await this.loginStatus()
+    const uid = status?.data?.profile?.userId || status?.profile?.userId
+    if (!uid) throw new AppError('AUTH_REQUIRED', '需要先登录网易云账号')
+    return Number(uid)
+  }
+
   logout() {
     return this.call<any>('logout', { timestamp: Date.now() })
   }
 
   async userPlaylists() {
-    const status = await this.loginStatus()
-    const uid = status?.data?.profile?.userId || status?.profile?.userId
-    if (!uid) throw new AppError('AUTH_REQUIRED', '需要先登录网易云账号')
+    const uid = await this.currentUserId()
     const result = await this.call<any>('user_playlist', { uid, limit: 100, offset: 0 })
-    return result?.playlist || []
+    return (result?.playlist || []).map(normalizePlaylist)
+  }
+
+  async playlistDetail(id: number) {
+    const result = await this.call<any>('playlist_detail', { id, s: 0, timestamp: Date.now() })
+    const playlist = result?.playlist
+    if (!playlist?.id) throw new AppError('PLAYLIST_NOT_FOUND', `未找到歌单 ${id}`)
+    return normalizePlaylist(playlist)
+  }
+
+  async playlistTracks(id: number) {
+    const detail = await this.playlistDetail(id)
+    const songs: Song[] = []
+    const pageSize = 500
+    const expected = Math.max(0, detail.trackCount)
+    for (let offset = 0; offset < Math.max(expected, 1); offset += pageSize) {
+      const result = await this.call<any>('playlist_track_all', {
+        id,
+        limit: pageSize,
+        offset,
+        timestamp: Date.now(),
+      })
+      const page = (result?.songs || []).map(normalizeSong)
+      songs.push(...page)
+      if (page.length < pageSize || songs.length >= expected) break
+    }
+    return { playlist: detail, songs }
   }
 
   async dailySongs() {
@@ -234,17 +288,58 @@ export class NeteaseApi {
     return (result?.data?.dailySongs || []).map(normalizeSong)
   }
 
+  async dailyPlaylists() {
+    const result = await this.call<any>('recommend_resource', { timestamp: Date.now() })
+    return (result?.recommend || []).map(normalizePlaylist)
+  }
+
   async personalFm() {
     const result = await this.call<any>('personal_fm', { timestamp: Date.now() })
     return (result?.data || []).map(normalizeSong)
+  }
+
+  fmTrash(id: number) {
+    return this.call<any>('fm_trash', { id, timestamp: Date.now() })
+  }
+
+  async likedSongIds() {
+    const uid = await this.currentUserId()
+    const result = await this.call<any>('likelist', { uid, timestamp: Date.now() })
+    return (result?.ids || []).map(Number).filter(Number.isFinite)
   }
 
   like(id: number, liked: boolean) {
     return this.call<any>('like', { id, like: liked, timestamp: Date.now() })
   }
 
-  async scrobble(id: number, time: number) {
-    const fn = typeof api.scrobble_v1 === 'function' ? 'scrobble_v1' : 'scrobble'
-    return this.call<any>(fn, { id, sourceid: 0, time: Math.floor(time) })
+  async scrobble(
+    song: Song,
+    playedSeconds: number,
+    context: QueueContext | undefined,
+    mode: ScrobbleMode,
+    level: string,
+  ) {
+    const fn = mode === 'ncbl' && typeof api.scrobble_v1 === 'function' ? 'scrobble_v1' : 'scrobble'
+    const sourceId = context?.id || song.album.id || song.id
+    const result = await this.call<any>(fn, {
+      id: song.id,
+      sourceid: sourceId,
+      source: context?.type || 'list',
+      time: Math.max(1, Math.floor(playedSeconds)),
+      total: Math.max(1, Math.floor(song.duration / 1000)),
+      name: song.name,
+      artist: song.artists.map((artist) => artist.name).join(' / '),
+      bitrate: level === 'lossless' || level === 'hires' ? 999 : level === 'exhigh' ? 320 : 192,
+      level,
+      vip: song.fee === 1,
+    })
+    if (result?.code !== 200 && result?.data !== 'success') {
+      throw new AppError(
+        'SCROBBLE_FAILED',
+        `${fn} 上报失败：${result?.msg || result?.message || result?.code || '未知错误'}`,
+        result,
+      )
+    }
+    return { mode: fn === 'scrobble_v1' ? 'ncbl' : 'legacy', result }
   }
 }

@@ -10,7 +10,7 @@ const defaultConfig: AppConfig = {
   allowTrial: false,
   unblock: { enabled: true, source: 'auto' },
   binaries: {},
-  scrobble: { enabled: false },
+  scrobble: { enabled: true, mode: 'ncbl', configured: false },
   smtc: { enabled: process.platform === 'win32' },
 }
 
@@ -48,6 +48,10 @@ export class AppStore {
       binaries: { ...defaultConfig.binaries, ...stored.binaries },
       scrobble: { ...defaultConfig.scrobble, ...stored.scrobble },
       smtc: { ...defaultConfig.smtc, ...stored.smtc },
+    }
+    // 早期开发版没有设置页，旧配置中的 enabled=false 只是旧默认值，不代表用户选择。
+    if (stored.scrobble && stored.scrobble.configured === undefined) {
+      this.config.scrobble.enabled = true
     }
     const auth = await readJson<{ cookie?: string }>(paths.authFile, {})
     this.cookie = auth.cookie || ''

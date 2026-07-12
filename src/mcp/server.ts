@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { ensureDaemon, requestDaemon } from '../ipc/client.js'
+import { ensureDaemon, requestDaemonResilient } from '../ipc/client.js'
 
 const tools = [
   {
@@ -77,6 +77,52 @@ const tools = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'get_playlist_tracks',
+    description: '获取指定网易云歌单的完整歌曲列表。',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'number' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'play_playlist',
+    description: '用完整歌单替换当前队列，并从指定索引开始播放。',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'number' }, index: { type: 'number', default: 0 } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'play_daily_recommendations',
+    description: '播放账号的每日推荐歌曲，可指定起始索引。',
+    inputSchema: {
+      type: 'object',
+      properties: { index: { type: 'number', default: 0 } },
+    },
+  },
+  {
+    name: 'personal_fm',
+    description: '获取、开始播放私人 FM，或将当前 FM 歌曲移入垃圾桶。',
+    inputSchema: {
+      type: 'object',
+      properties: { action: { type: 'string', enum: ['get', 'play', 'trash'] } },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'set_playback_mode',
+    description: '设置顺序、单曲循环或随机播放模式。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['sequence', 'repeat-one', 'shuffle'] },
+      },
+      required: ['mode'],
+    },
+  },
+  {
     name: 'like_song',
     description: '喜欢或取消喜欢一首歌曲。',
     inputSchema: {
@@ -88,34 +134,52 @@ const tools = [
 ]
 
 const invokeTool = async (name: string, args: Record<string, unknown>) => {
+  const request = requestDaemonResilient
   switch (name) {
     case 'search_songs':
-      return requestDaemon('search', args)
+      return request('search', args)
     case 'play_song':
-      return requestDaemon('play', args)
+      return request('play', args)
     case 'get_player_status':
-      return requestDaemon('status')
+      return request('status')
     case 'control_playback': {
       const action = String(args.action)
-      if (action === 'seek')
-        return requestDaemon('seek', { value: args.value, relative: args.relative })
-      if (action === 'volume') return requestDaemon('volume', { value: args.value })
-      return requestDaemon(action)
+      if (action === 'seek') return request('seek', { value: args.value, relative: args.relative })
+      if (action === 'volume') return request('volume', { value: args.value })
+      return request(action)
     }
     case 'manage_queue': {
       const action = String(args.action)
-      return requestDaemon(`queue.${action}`, args)
+      return request(`queue.${action}`, args)
     }
     case 'get_lyrics':
-      return requestDaemon('lyrics', args)
+      return request('lyrics', args)
     case 'get_spectrum_snapshot':
-      return requestDaemon('spectrum')
+      return request('spectrum')
     case 'get_user_playlists':
-      return requestDaemon('library.playlists')
+      return request('library.playlists')
     case 'get_daily_recommendations':
-      return requestDaemon('library.daily')
+      return request('library.daily')
+    case 'get_playlist_tracks':
+      return request('library.playlist', args)
+    case 'play_playlist':
+      return request('library.playlist.play', args)
+    case 'play_daily_recommendations':
+      return request('library.daily.play', args)
+    case 'personal_fm': {
+      const action = String(args.action)
+      return request(
+        action === 'trash'
+          ? 'library.fm.trash'
+          : action === 'play'
+            ? 'library.fm.play'
+            : 'library.fm',
+      )
+    }
+    case 'set_playback_mode':
+      return request('mode.set', args)
     case 'like_song':
-      return requestDaemon('like', args)
+      return request('like', args)
     default:
       throw new Error(`未知工具：${name}`)
   }

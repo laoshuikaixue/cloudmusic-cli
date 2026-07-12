@@ -1,5 +1,7 @@
 export type PlaybackSource = 'official' | 'unblock' | 'trial' | 'local' | null
 export type PlaybackMode = 'sequence' | 'repeat-one' | 'shuffle'
+export type QueueContextType = 'manual' | 'search' | 'playlist' | 'daily' | 'fm' | 'liked'
+export type ScrobbleMode = 'ncbl' | 'legacy'
 
 export interface Artist {
   id?: number
@@ -21,6 +23,22 @@ export interface Song {
   cover?: string
   fee?: number
   quality?: string
+}
+
+export interface PlaylistSummary {
+  id: number
+  name: string
+  cover?: string
+  trackCount: number
+  description?: string
+  creator?: { id?: number; name: string }
+  subscribed?: boolean
+}
+
+export interface QueueContext {
+  type: QueueContextType
+  id?: number
+  name?: string
 }
 
 export interface LyricLine {
@@ -50,6 +68,10 @@ export interface PlaybackStatus {
   quality?: string
   queueLength: number
   queueIndex: number
+  queueContext?: QueueContext
+  liked?: boolean
+  scrobbleEnabled?: boolean
+  scrobbleMode?: ScrobbleMode
   currentLyric?: string
   nextLyric?: string
   error?: string
@@ -70,6 +92,8 @@ export interface AppConfig {
   }
   scrobble: {
     enabled: boolean
+    mode: ScrobbleMode
+    configured: boolean
   }
   smtc: {
     enabled: boolean
@@ -79,6 +103,7 @@ export interface AppConfig {
 export interface QueueSnapshot {
   songs: Song[]
   index: number
+  context?: QueueContext
 }
 
 export interface SourceResult {

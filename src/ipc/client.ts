@@ -7,6 +7,13 @@ import type { RpcEvent, RpcResponse } from '../core/types.js'
 
 const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+const recoverableSocketCodes = new Set(['ENOENT', 'ECONNREFUSED', 'EPIPE', 'ECONNRESET'])
+
+export const isDaemonConnectionError = (error: unknown) => {
+  const code = (error as NodeJS.ErrnoException)?.code
+  return typeof code === 'string' && recoverableSocketCodes.has(code)
+}
+
 export const requestDaemon = <T = unknown>(
   method: string,
   params?: Record<string, unknown>,
@@ -16,14 +23,20 @@ export const requestDaemon = <T = unknown>(
     const id = randomUUID()
     const socket = createConnection(paths.daemonSocket)
     let buffer = ''
+    let settled = false
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      callback()
+    }
     const timer = setTimeout(() => {
       socket.destroy()
-      reject(new AppError('DAEMON_TIMEOUT', `daemon 调用超时：${method}`))
+      finish(() => reject(new AppError('DAEMON_TIMEOUT', `daemon 调用超时：${method}`)))
     }, timeout)
     socket.setEncoding('utf8')
     socket.once('error', (error) => {
-      clearTimeout(timer)
-      reject(error)
+      finish(() => reject(error))
     })
     socket.once('connect', () => {
       socket.write(`${JSON.stringify({ id, method, params })}\n`)
@@ -36,17 +49,27 @@ export const requestDaemon = <T = unknown>(
         const line = buffer.slice(0, newline)
         buffer = buffer.slice(newline + 1)
         if (!line.trim()) continue
-        const response = JSON.parse(line) as RpcResponse
+        let response: RpcResponse
+        try {
+          response = JSON.parse(line) as RpcResponse
+        } catch (error) {
+          socket.destroy()
+          finish(() =>
+            reject(new AppError('DAEMON_PROTOCOL_ERROR', 'daemon 返回了无效响应', error)),
+          )
+          return
+        }
         if (response.id !== id) continue
-        clearTimeout(timer)
         socket.end()
-        if (response.ok) resolve(response.result as T)
+        if (response.ok) finish(() => resolve(response.result as T))
         else
-          reject(
-            new AppError(
-              response.error?.code || 'DAEMON_ERROR',
-              response.error?.message || 'daemon 调用失败',
-              response.error?.details,
+          finish(() =>
+            reject(
+              new AppError(
+                response.error?.code || 'DAEMON_ERROR',
+                response.error?.message || 'daemon 调用失败',
+                response.error?.details,
+              ),
             ),
           )
       }
@@ -65,7 +88,9 @@ const spawnDaemon = () => {
   child.unref()
 }
 
-export const ensureDaemon = async () => {
+let daemonStartPromise: Promise<unknown> | undefined
+
+const startDaemon = async () => {
   try {
     return await requestDaemon('ping', undefined, 1000)
   } catch {
@@ -84,6 +109,29 @@ export const ensureDaemon = async () => {
       '无法启动播放器 daemon',
       lastError instanceof Error ? lastError.message : String(lastError),
     )
+  }
+}
+
+export const ensureDaemon = () => {
+  if (!daemonStartPromise) {
+    daemonStartPromise = startDaemon().finally(() => {
+      daemonStartPromise = undefined
+    })
+  }
+  return daemonStartPromise
+}
+
+export const requestDaemonResilient = async <T = unknown>(
+  method: string,
+  params?: Record<string, unknown>,
+  timeout?: number,
+) => {
+  try {
+    return await requestDaemon<T>(method, params, timeout)
+  } catch (error) {
+    if (!isDaemonConnectionError(error)) throw error
+    await ensureDaemon()
+    return requestDaemon<T>(method, params, timeout)
   }
 }
 

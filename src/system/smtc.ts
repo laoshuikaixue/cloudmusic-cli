@@ -44,6 +44,9 @@ export class SmtcBridge {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
+    this.process.stdin.on('error', () => undefined)
+    this.process.stdout.on('error', () => undefined)
+    this.process.stderr.on('error', () => undefined)
     this.process.stdout.setEncoding('utf8')
     this.process.stdout.on('data', (chunk) => {
       this.buffer += chunk

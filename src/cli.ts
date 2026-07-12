@@ -178,7 +178,16 @@ queue
   .action(async (from, to) =>
     output(await withDaemon('queue.move', { from: Number(from), to: Number(to) })),
   )
+queue
+  .command('play <index>')
+  .description('播放队列中的指定索引')
+  .action(async (index) => output(await withDaemon('queue.play', { index: Number(index) })))
 queue.command('clear').action(async () => output(await withDaemon('queue.clear')))
+
+program
+  .command('mode <mode>')
+  .description('设置播放模式：sequence、repeat-one、shuffle')
+  .action(async (mode) => output(await withDaemon('mode.set', { mode })))
 
 program
   .command('lyrics [id]')
@@ -247,8 +256,39 @@ login.command('logout').action(async () => output(await withDaemon('logout')))
 
 const library = program.command('library').description('网易云音乐库')
 library.command('playlists').action(async () => output(await withDaemon('library.playlists')))
-library.command('daily').action(async () => output(await withDaemon('library.daily')))
-library.command('fm').action(async () => output(await withDaemon('library.fm')))
+library
+  .command('playlist <id>')
+  .option('--play', '加载并播放整个歌单')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (id, options) =>
+    output(
+      await withDaemon(options.play ? 'library.playlist.play' : 'library.playlist', {
+        id: Number(id),
+        index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('daily')
+  .option('--play', '播放全部每日推荐')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon(options.play ? 'library.daily.play' : 'library.daily', {
+        index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('daily-playlists')
+  .action(async () => output(await withDaemon('library.daily.playlists')))
+library
+  .command('fm')
+  .option('--play', '进入私人 FM 并自动续取')
+  .action(async (options) =>
+    output(await withDaemon(options.play ? 'library.fm.play' : 'library.fm')),
+  )
+library.command('fm-trash').action(async () => output(await withDaemon('library.fm.trash')))
 
 program
   .command('like <id>')
@@ -256,6 +296,40 @@ program
   .action(async (id, options) =>
     output(await withDaemon('like', { id: Number(id), liked: !options.remove })),
   )
+
+const scrobble = program.command('scrobble').description('管理网易云听歌上报')
+scrobble.command('status').action(async () => {
+  const config = await withDaemon<any>('config.get')
+  output(config.scrobble)
+})
+scrobble.command('enable').action(async () => {
+  const config = await withDaemon<any>('config.get')
+  output(
+    await withDaemon('config.set', {
+      patch: { scrobble: { ...config.scrobble, enabled: true } },
+    }),
+  )
+})
+scrobble.command('disable').action(async () => {
+  const config = await withDaemon<any>('config.get')
+  output(
+    await withDaemon('config.set', {
+      patch: { scrobble: { ...config.scrobble, enabled: false } },
+    }),
+  )
+})
+scrobble
+  .command('mode <mode>')
+  .description('选择 ncbl 或 legacy 上报方式')
+  .action(async (mode) => {
+    if (!['ncbl', 'legacy'].includes(mode)) throw new Error('mode 必须是 ncbl 或 legacy')
+    const config = await withDaemon<any>('config.get')
+    output(
+      await withDaemon('config.set', {
+        patch: { scrobble: { ...config.scrobble, mode } },
+      }),
+    )
+  })
 
 const source = program.command('source').description('音源设置')
 source.command('status').action(async () => output(await withDaemon('source.status')))

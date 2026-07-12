@@ -1,20 +1,34 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
-import { ensureDaemon, requestDaemon } from '../ipc/client.js'
-import type { PlaybackStatus, QueueSnapshot, Song, SpectrumFrame } from '../core/types.js'
+import { requestDaemonResilient } from '../ipc/client.js'
+import type {
+  AppConfig,
+  PlaybackMode,
+  PlaybackStatus,
+  PlaylistSummary,
+  QueueSnapshot,
+  Song,
+  SpectrumFrame,
+} from '../core/types.js'
 
-type PageMode = 'normal' | 'search' | 'results' | 'cookie' | 'qr' | 'queue'
+type PageMode =
+  | 'normal'
+  | 'search'
+  | 'results'
+  | 'cookie'
+  | 'qr'
+  | 'queue'
+  | 'library'
+  | 'playlists'
+  | 'tracks'
+  | 'settings'
+
+type LibrarySource =
+  { type: 'playlist'; id: number; name: string } | { type: 'daily'; name: string }
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
-  try {
-    return await requestDaemon<T>(method, params)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code
-    if (!['ENOENT', 'ECONNREFUSED', 'EPIPE'].includes(code || '')) throw error
-    await ensureDaemon()
-    return requestDaemon<T>(method, params)
-  }
+  return requestDaemonResilient<T>(method, params)
 }
 
 interface AccountStatus {
@@ -80,6 +94,12 @@ export const NowPlaying = () => {
   const [searchResults, setSearchResults] = useState<Song[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queueIndex, setQueueIndex] = useState(0)
+  const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
+  const [librarySongs, setLibrarySongs] = useState<Song[]>([])
+  const [libraryIndex, setLibraryIndex] = useState(0)
+  const [librarySource, setLibrarySource] = useState<LibrarySource | null>(null)
+  const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(null)
+  const [settingsIndex, setSettingsIndex] = useState(0)
   const [qrText, setQrText] = useState('')
   const [message, setMessage] = useState('按 / 搜索歌曲，按 c 使用 Cookie 登录')
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
@@ -158,14 +178,150 @@ export const NowPlaying = () => {
     }
   }
 
-  const playSong = async (song: Song) => {
-    setMessage(`正在加载：${songLabel(song)}`)
+  const playSearchResult = async (index: number) => {
+    const song = searchResults[index]
+    if (!song) return
+    setMessage(`正在加载搜索队列：${songLabel(song)}`)
     try {
-      await callDaemon('play', { id: song.id })
+      await callDaemon('queue.replace', {
+        ids: searchResults.map((item) => item.id),
+        index,
+        context: 'search',
+        name: inputValue.trim() || '搜索结果',
+      })
       await refreshQueue()
       setMode('normal')
-      setInputValue('')
       setMessage(`正在播放：${songLabel(song)}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openPlaylists = async () => {
+    setMessage('正在加载账号歌单…')
+    try {
+      const result = await callDaemon<PlaylistSummary[]>('library.playlists')
+      setPlaylists(result)
+      setLibraryIndex(0)
+      setMode('playlists')
+      setMessage(`已加载 ${result.length} 个歌单`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openPlaylist = async (playlist: PlaylistSummary) => {
+    setMessage(`正在加载歌单：${playlist.name}…`)
+    try {
+      const result = await callDaemon<{ playlist: PlaylistSummary; songs: Song[] }>(
+        'library.playlist',
+        { id: playlist.id },
+      )
+      setLibrarySongs(result.songs)
+      setLibrarySource({ type: 'playlist', id: playlist.id, name: playlist.name })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`${playlist.name} · ${result.songs.length} 首歌曲`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openDaily = async () => {
+    setMessage('正在加载每日推荐…')
+    try {
+      const songs = await callDaemon<Song[]>('library.daily')
+      setLibrarySongs(songs)
+      setLibrarySource({ type: 'daily', name: '每日推荐' })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`每日推荐 · ${songs.length} 首歌曲`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const playLibrary = async (index: number) => {
+    if (!librarySource || !librarySongs[index]) return
+    setMessage(`正在加载：${songLabel(librarySongs[index])}`)
+    try {
+      if (librarySource.type === 'playlist') {
+        await callDaemon('library.playlist.play', { id: librarySource.id, index })
+      } else {
+        await callDaemon('library.daily.play', { index })
+      }
+      await refreshQueue()
+      setMode('normal')
+      setMessage(`正在播放：${librarySource.name}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const playFm = async () => {
+    setMessage('正在加载私人 FM…')
+    try {
+      await callDaemon('library.fm.play')
+      await refreshQueue()
+      setMode('normal')
+      setMessage('私人 FM 已开始播放')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openSettings = async () => {
+    setMessage('正在加载设置…')
+    try {
+      setSettingsConfig(await callDaemon<AppConfig>('config.get'))
+      setSettingsIndex(0)
+      setMode('settings')
+      setMessage('设置会立即保存并应用')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const changeSetting = async (index: number, direction = 1) => {
+    if (!settingsConfig) return
+    try {
+      if (index === 5) {
+        await callDaemon('smtc.set', { enabled: !settingsConfig.smtc.enabled })
+      } else {
+        let patch: Partial<AppConfig> = {}
+        if (index === 0) {
+          patch = {
+            scrobble: {
+              ...settingsConfig.scrobble,
+              enabled: !settingsConfig.scrobble.enabled,
+              configured: true,
+            },
+          }
+        }
+        if (index === 1) {
+          patch = {
+            scrobble: {
+              ...settingsConfig.scrobble,
+              mode: settingsConfig.scrobble.mode === 'ncbl' ? 'legacy' : 'ncbl',
+              configured: true,
+            },
+          }
+        }
+        if (index === 2) {
+          const levels = ['standard', 'higher', 'exhigh', 'lossless', 'hires']
+          const current = Math.max(0, levels.indexOf(settingsConfig.quality))
+          patch = { quality: levels[(current + direction + levels.length) % levels.length] }
+        }
+        if (index === 3) {
+          patch = {
+            unblock: { ...settingsConfig.unblock, enabled: !settingsConfig.unblock.enabled },
+          }
+        }
+        if (index === 4) patch = { allowTrial: !settingsConfig.allowTrial }
+        await callDaemon('config.set', { patch })
+      }
+      setSettingsConfig(await callDaemon<AppConfig>('config.get'))
+      setMessage('设置已保存')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -253,7 +409,7 @@ export const NowPlaying = () => {
       if (key.downArrow) {
         return setSelectedIndex((index) => Math.min(searchResults.length - 1, index + 1))
       }
-      if (key.return && searchResults[selectedIndex]) void playSong(searchResults[selectedIndex])
+      if (key.return && searchResults[selectedIndex]) void playSearchResult(selectedIndex)
       return
     }
 
@@ -262,7 +418,55 @@ export const NowPlaying = () => {
       if (key.upArrow) return setQueueIndex((index) => Math.max(0, index - 1))
       if (key.downArrow)
         return setQueueIndex((index) => Math.min(queue.songs.length - 1, index + 1))
-      if (key.return && queue.songs[queueIndex]) void playSong(queue.songs[queueIndex])
+      if (key.return && queue.songs[queueIndex]) {
+        const selectedSong = queue.songs[queueIndex]
+        void callDaemon('queue.play', { index: queueIndex })
+          .then(() => {
+            setMode('normal')
+            setMessage(`正在播放：${songLabel(selectedSong)}`)
+          })
+          .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
+      }
+      return
+    }
+
+    if (mode === 'library') {
+      if (key.escape || input === 'l') return setMode('normal')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(2, index + 1))
+      if (key.return) {
+        if (libraryIndex === 0) void openPlaylists()
+        if (libraryIndex === 1) void openDaily()
+        if (libraryIndex === 2) void playFm()
+      }
+      return
+    }
+
+    if (mode === 'playlists') {
+      if (key.escape) return setMode('library')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow)
+        return setLibraryIndex((index) => Math.min(playlists.length - 1, index + 1))
+      if (key.return && playlists[libraryIndex]) void openPlaylist(playlists[libraryIndex])
+      return
+    }
+
+    if (mode === 'tracks') {
+      if (key.escape) return setMode(librarySource?.type === 'playlist' ? 'playlists' : 'library')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow)
+        return setLibraryIndex((index) => Math.min(librarySongs.length - 1, index + 1))
+      if (key.return && librarySongs[libraryIndex]) void playLibrary(libraryIndex)
+      if (input === 'a' && librarySongs.length) void playLibrary(0)
+      return
+    }
+
+    if (mode === 'settings') {
+      if (key.escape || input === 'o' || input === ',') return setMode('normal')
+      if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) return setSettingsIndex((index) => Math.min(5, index + 1))
+      if (key.leftArrow) void changeSetting(settingsIndex, -1)
+      if (key.rightArrow || key.return || input === ' ') void changeSetting(settingsIndex, 1)
       return
     }
 
@@ -285,6 +489,11 @@ export const NowPlaying = () => {
       return setMode('cookie')
     }
     if (input === 'g') return void beginQrLogin()
+    if (input === 'l') {
+      setLibraryIndex(0)
+      return setMode('library')
+    }
+    if (input === 'o' || input === ',') return void openSettings()
     if (input === 'v') return void verifyAccount()
     if (input === 'u') {
       void callDaemon('logout')
@@ -296,6 +505,20 @@ export const NowPlaying = () => {
       return
     }
     if (key.tab) return setMode('queue')
+    if (input === 'f' && status.song) {
+      runControl('like', { id: status.song.id, liked: !status.liked })
+      setMessage(status.liked ? '已取消喜欢' : '已加入喜欢')
+    }
+    if (input === 'm') {
+      const modes: PlaybackMode[] = ['sequence', 'repeat-one', 'shuffle']
+      const nextMode = modes[(modes.indexOf(status.mode) + 1) % modes.length]
+      runControl('mode.set', { mode: nextMode })
+      setMessage(`播放模式：${nextMode}`)
+    }
+    if (input === 'd' && status.queueContext?.type === 'fm') {
+      runControl('library.fm.trash')
+      setMessage('已移入 FM 垃圾桶并播放下一首')
+    }
     if (input === ' ') runControl('toggle')
     if (input === 'n') runControl('next')
     if (input === 'p') runControl('previous')
@@ -314,14 +537,31 @@ export const NowPlaying = () => {
   const visibleResults = searchResults.slice(resultStart, resultStart + 8)
   const queueStart = Math.max(0, Math.min(queueIndex - 3, queue.songs.length - 8))
   const visibleQueue = queue.songs.slice(queueStart, queueStart + 8)
+  const playlistStart = Math.max(0, Math.min(libraryIndex - 3, playlists.length - 8))
+  const visiblePlaylists = playlists.slice(playlistStart, playlistStart + 8)
+  const trackStart = Math.max(0, Math.min(libraryIndex - 3, librarySongs.length - 8))
+  const visibleTracks = librarySongs.slice(trackStart, trackStart + 8)
   const shownInput = inputValue.slice(-Math.max(12, terminalWidth - 18))
+  const settingsRows: Array<[string, string]> = settingsConfig
+    ? [
+        ['听歌上报', settingsConfig.scrobble.enabled ? '开启' : '关闭'],
+        ['上报方式', settingsConfig.scrobble.mode === 'ncbl' ? 'NCBL (PLV/PLD)' : 'Legacy'],
+        ['默认音质', settingsConfig.quality],
+        ['解灰回退', settingsConfig.unblock.enabled ? '开启' : '关闭'],
+        ['官方试听', settingsConfig.allowTrial ? '允许' : '关闭'],
+        ['Windows SMTC', settingsConfig.smtc.enabled ? '开启' : '关闭'],
+      ]
+    : []
 
   const interactionPanel = (
     <Box marginTop={1} borderStyle="round" paddingX={1} flexDirection="column">
       {mode === 'normal' ? (
         <>
-          <Text>一页操作：/ 搜索 · c Cookie 登录 · g 二维码登录 · v 验证账号 · u 退出账号</Text>
-          <Text dimColor>Tab 打开队列 · Space 暂停/恢复 · 方向键进度/音量 · p/n 切歌</Text>
+          <Text>一页操作：/ 搜索 · l 音乐库 · Tab 队列 · c/g 登录 · v 验证 · u 退出账号</Text>
+          <Text dimColor>
+            Space 暂停 · 方向键进度/音量 · p/n 切歌 · f 喜欢 · m 模式 · o/, 设置
+            {status.queueContext?.type === 'fm' ? ' · d FM 垃圾桶' : ''}
+          </Text>
         </>
       ) : null}
       {mode === 'search' ? (
@@ -370,6 +610,59 @@ export const NowPlaying = () => {
           )}
         </>
       ) : null}
+      {mode === 'library' ? (
+        <>
+          <Text bold>音乐库（↑/↓ 选择，Enter 打开，l/Esc 返回）</Text>
+          {['我的歌单', '每日推荐', '私人 FM'].map((label, index) => (
+            <Text key={label} color={index === libraryIndex ? 'cyan' : undefined}>
+              {index === libraryIndex ? '▶ ' : '  '}
+              {label}
+            </Text>
+          ))}
+        </>
+      ) : null}
+      {mode === 'playlists' ? (
+        <>
+          <Text bold>我的歌单（↑/↓ 选择，Enter 查看，Esc 返回）</Text>
+          {visiblePlaylists.map((playlist, offset) => {
+            const index = playlistStart + offset
+            return (
+              <Text key={playlist.id} color={index === libraryIndex ? 'cyan' : undefined}>
+                {index === libraryIndex ? '▶ ' : '  '}
+                {playlist.name} · {playlist.trackCount} 首
+              </Text>
+            )
+          })}
+        </>
+      ) : null}
+      {mode === 'tracks' ? (
+        <>
+          <Text bold>
+            {librarySource?.name || '歌曲列表'}（↑/↓ 选择，Enter 从此播放，a 播放全部，Esc 返回）
+          </Text>
+          {visibleTracks.map((song, offset) => {
+            const index = trackStart + offset
+            return (
+              <Text key={`${song.id}-${index}`} color={index === libraryIndex ? 'cyan' : undefined}>
+                {index === libraryIndex ? '▶ ' : '  '}
+                {songLabel(song)}
+              </Text>
+            )
+          })}
+        </>
+      ) : null}
+      {mode === 'settings' ? (
+        <>
+          <Text bold>设置（↑/↓ 选择，←/→/Enter 修改，o/,/Esc 返回）</Text>
+          {settingsRows.map(([label, value], index) => (
+            <Text key={label} color={index === settingsIndex ? 'cyan' : undefined}>
+              {index === settingsIndex ? '▶ ' : '  '}
+              {label.padEnd(12, ' ')} {value}
+            </Text>
+          ))}
+          <Text dimColor>听歌上报按真实播放时长自动触发，每个播放周期只提交一次。</Text>
+        </>
+      ) : null}
       {mode === 'qr' ? (
         <>
           <Text>{qrText}</Text>
@@ -406,7 +699,11 @@ export const NowPlaying = () => {
         <Text dimColor>
           音量 {status.volume}% · 音质 {status.quality || '—'} · 来源 {status.source || '—'}
           {status.sourceName ? `:${status.sourceName}` : ''} · 队列 {status.queueIndex + 1}/
-          {status.queueLength}
+          {status.queueLength} · 模式 {status.mode} · {status.liked ? '♥ 已喜欢' : '♡ 未喜欢'}
+        </Text>
+        <Text dimColor>
+          列表：{status.queueContext?.name || status.queueContext?.type || '临时队列'} · 听歌上报{' '}
+          {status.scrobbleEnabled ? `开启(${status.scrobbleMode})` : '关闭'}
         </Text>
       </Box>
 
