@@ -37,6 +37,7 @@ type PageMode =
   | 'comments'
   | 'collections'
   | 'new-regions'
+  | 'discover-categories'
 
 type LibrarySource =
   | { type: 'playlist'; id: number; name: string; owned: boolean }
@@ -66,6 +67,14 @@ const newSongRegions = [
   { area: 8, name: '日本新歌' },
   { area: 16, name: '韩国新歌' },
 ] as const
+
+const discoverEntries = [
+  { kind: 'recommended', name: '为你推荐' },
+  { kind: 'highquality', name: '精品歌单' },
+  ...['全部', '华语', '欧美', '日语', '韩语', '粤语', '流行', '摇滚', '民谣', '电子', '说唱', 'ACG', '古典', '治愈'].map(
+    (name) => ({ kind: 'category', name }),
+  ),
+] as Array<{ kind: 'recommended' | 'highquality' | 'category'; name: string }>
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
   return requestDaemonResilient<T>(method, params)
@@ -140,9 +149,9 @@ export const NowPlaying = () => {
   const [queueIndex, setQueueIndex] = useState(0)
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
   const [playlistPageTitle, setPlaylistPageTitle] = useState('我的歌单')
-  const [playlistPageKind, setPlaylistPageKind] = useState<'library' | 'daily' | 'toplist'>(
-    'library',
-  )
+  const [playlistPageKind, setPlaylistPageKind] = useState<
+    'library' | 'daily' | 'toplist' | 'discover'
+  >('library')
   const [playlistEditAction, setPlaylistEditAction] = useState<'create' | 'rename'>('create')
   const [playlistEditTarget, setPlaylistEditTarget] = useState<PlaylistSummary | null>(null)
   const [playlistPickerSong, setPlaylistPickerSong] = useState<Song | null>(null)
@@ -565,6 +574,32 @@ export const NowPlaying = () => {
       setLibraryIndex(0)
       setMode('playlists')
       setMessage(`每日推荐歌单 · ${result.length} 个`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openDiscoverPlaylists = async (entry: (typeof discoverEntries)[number]) => {
+    setMessage(`正在加载${entry.name}歌单…`)
+    try {
+      let result: PlaylistSummary[]
+      if (entry.kind === 'recommended') {
+        result = await callDaemon<PlaylistSummary[]>('library.discover.recommended', { limit: 30 })
+      } else {
+        const response = await callDaemon<{ playlists: PlaylistSummary[] }>(
+          entry.kind === 'highquality'
+            ? 'library.discover.highquality'
+            : 'library.discover.playlists',
+          { cat: entry.kind === 'category' ? entry.name : '全部', limit: 50 },
+        )
+        result = response.playlists
+      }
+      setPlaylists(result)
+      setPlaylistPageTitle(entry.name === '全部' ? '热门歌单' : entry.name)
+      setPlaylistPageKind('discover')
+      setLibraryIndex(0)
+      setMode('playlists')
+      setMessage(`${entry.name} · ${result.length} 个歌单`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -1027,24 +1062,40 @@ export const NowPlaying = () => {
     if (mode === 'library') {
       if (key.escape || input === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(12, index + 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(13, index + 1))
       if (key.return) {
         if (libraryIndex === 0) void openPlaylists()
         if (libraryIndex === 1) void openDaily()
         if (libraryIndex === 2) void openDailyPlaylists()
-        if (libraryIndex === 3) void openToplists()
-        if (libraryIndex === 4) {
+        if (libraryIndex === 3) {
+          setLibraryIndex(0)
+          setMode('discover-categories')
+        }
+        if (libraryIndex === 4) void openToplists()
+        if (libraryIndex === 5) {
           setLibraryIndex(0)
           setMode('new-regions')
         }
-        if (libraryIndex === 5) void playFm()
-        if (libraryIndex === 6) void playHeartMode()
-        if (libraryIndex === 7) void openHistory()
-        if (libraryIndex === 8) void openCloud()
-        if (libraryIndex === 9) void openCollections('album')
-        if (libraryIndex === 10) void openCollections('artist')
-        if (libraryIndex === 11) void openListeningRecord('week')
-        if (libraryIndex === 12) void openListeningRecord('all')
+        if (libraryIndex === 6) void playFm()
+        if (libraryIndex === 7) void playHeartMode()
+        if (libraryIndex === 8) void openHistory()
+        if (libraryIndex === 9) void openCloud()
+        if (libraryIndex === 10) void openCollections('album')
+        if (libraryIndex === 11) void openCollections('artist')
+        if (libraryIndex === 12) void openListeningRecord('week')
+        if (libraryIndex === 13) void openListeningRecord('all')
+      }
+      return
+    }
+
+    if (mode === 'discover-categories') {
+      if (key.escape) return setMode('library')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setLibraryIndex((index) => Math.min(discoverEntries.length - 1, index + 1))
+      }
+      if (key.return && discoverEntries[libraryIndex]) {
+        void openDiscoverPlaylists(discoverEntries[libraryIndex])
       }
       return
     }

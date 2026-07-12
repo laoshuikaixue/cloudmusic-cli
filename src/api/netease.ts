@@ -462,6 +462,44 @@ export class NeteaseApi {
     return (result?.recommend || []).map(normalizePlaylist)
   }
 
+  async personalizedPlaylists(limit = 30) {
+    const result = await this.call<any>('personalized', { limit, timestamp: Date.now() })
+    return (result?.result || []).map(normalizePlaylist)
+  }
+
+  async discoverPlaylists(cat = '全部', order: 'hot' | 'new' = 'hot', limit = 50, offset = 0) {
+    const result = await this.call<any>('top_playlist', {
+      cat,
+      order,
+      limit,
+      offset,
+      timestamp: Date.now(),
+    })
+    return {
+      playlists: (result?.playlists || []).map(normalizePlaylist),
+      total: Number(result?.total || 0),
+      more: Boolean(result?.more),
+      cat,
+      order,
+    }
+  }
+
+  async highqualityPlaylists(cat = '全部', limit = 50, before = 0) {
+    const result = await this.call<any>('top_playlist_highquality', {
+      cat,
+      limit,
+      before,
+      timestamp: Date.now(),
+    })
+    return {
+      playlists: (result?.playlists || []).map(normalizePlaylist),
+      total: Number(result?.total || 0),
+      more: Boolean(result?.more),
+      lasttime: Number(result?.lasttime || 0),
+      cat,
+    }
+  }
+
   async toplists() {
     const result = await this.call<any>('toplist', { timestamp: Date.now() })
     return (result?.list || []).map(normalizePlaylist)

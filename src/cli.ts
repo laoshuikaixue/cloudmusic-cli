@@ -365,6 +365,45 @@ library
 library
   .command('daily-playlists')
   .action(async () => output(await withDaemon('library.daily.playlists')))
+library
+  .command('personalized')
+  .description('获取通用推荐歌单')
+  .option('--limit <limit>', '返回数量', '30')
+  .action(async (options) =>
+    output(await withDaemon('library.discover.recommended', { limit: Number(options.limit) })),
+  )
+library
+  .command('discover')
+  .description('浏览歌单广场')
+  .option('--cat <category>', '歌单分类', '全部')
+  .option('--order <order>', 'hot 或 new', 'hot')
+  .option('--limit <limit>', '返回数量', '50')
+  .option('--offset <offset>', '分页偏移', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon('library.discover.playlists', {
+        cat: options.cat,
+        order: options.order,
+        limit: Number(options.limit),
+        offset: Number(options.offset),
+      }),
+    ),
+  )
+library
+  .command('highquality')
+  .description('浏览精品歌单')
+  .option('--cat <category>', '歌单分类', '全部')
+  .option('--limit <limit>', '返回数量', '50')
+  .option('--before <timestamp>', '上一页末项更新时间', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon('library.discover.highquality', {
+        cat: options.cat,
+        limit: Number(options.limit),
+        before: Number(options.before),
+      }),
+    ),
+  )
 library.command('toplists').action(async () => output(await withDaemon('library.toplists')))
 library
   .command('toplist <id>')

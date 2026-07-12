@@ -544,6 +544,8 @@ export class PlayerDaemon {
       'library.playlist.delete',
       'library.playlist.tracks',
       'library.daily.play',
+      'library.toplist.play',
+      'library.new.play',
       'library.fm.play',
       'library.fm.trash',
       'library.heart.play',
@@ -771,6 +773,23 @@ export class PlayerDaemon {
         return this.playDaily(params.index === undefined ? 0 : numberParam(params.index, 'index'))
       case 'library.daily.playlists':
         return this.api.dailyPlaylists()
+      case 'library.discover.recommended':
+        return this.api.personalizedPlaylists(
+          params.limit === undefined ? 30 : numberParam(params.limit, 'limit'),
+        )
+      case 'library.discover.playlists':
+        return this.api.discoverPlaylists(
+          typeof params.cat === 'string' && params.cat.trim() ? params.cat.trim() : '全部',
+          params.order === 'new' ? 'new' : 'hot',
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+          params.offset === undefined ? 0 : numberParam(params.offset, 'offset'),
+        )
+      case 'library.discover.highquality':
+        return this.api.highqualityPlaylists(
+          typeof params.cat === 'string' && params.cat.trim() ? params.cat.trim() : '全部',
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+          params.before === undefined ? 0 : numberParam(params.before, 'before'),
+        )
       case 'library.toplists':
         return this.api.toplists()
       case 'library.toplist':

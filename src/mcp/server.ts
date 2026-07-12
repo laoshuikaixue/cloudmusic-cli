@@ -102,6 +102,25 @@ const tools = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'discover_playlists',
+    description: '获取推荐歌单、分类歌单或精品歌单。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['recommended', 'category', 'highquality'],
+          default: 'recommended',
+        },
+        cat: { type: 'string', default: '全部' },
+        order: { type: 'string', enum: ['hot', 'new'], default: 'hot' },
+        limit: { type: 'number', default: 30 },
+        offset: { type: 'number', default: 0 },
+        before: { type: 'number', default: 0 },
+      },
+    },
+  },
+  {
     name: 'open_toplist',
     description: '获取或播放指定网易云官方榜单。',
     inputSchema: {
@@ -374,6 +393,15 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.daily')
     case 'get_toplists':
       return request('library.toplists')
+    case 'discover_playlists':
+      return request(
+        args.kind === 'highquality'
+          ? 'library.discover.highquality'
+          : args.kind === 'category'
+            ? 'library.discover.playlists'
+            : 'library.discover.recommended',
+        args,
+      )
     case 'open_toplist':
       return request(args.play === true ? 'library.toplist.play' : 'library.toplist', args)
     case 'get_new_songs':
