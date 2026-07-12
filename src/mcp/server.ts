@@ -92,6 +92,11 @@ const tools = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'get_user_profile',
+    description: '获取当前登录账号或指定网易云用户的公开资料。',
+    inputSchema: { type: 'object', properties: { uid: { type: 'number' } } },
+  },
+  {
     name: 'get_daily_recommendations',
     description: '获取已登录账号的每日推荐歌曲。',
     inputSchema: { type: 'object', properties: {} },
@@ -389,6 +394,8 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('spectrum')
     case 'get_user_playlists':
       return request('library.playlists')
+    case 'get_user_profile':
+      return request('library.profile', args)
     case 'get_daily_recommendations':
       return request('library.daily')
     case 'get_toplists':

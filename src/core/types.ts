@@ -69,6 +69,21 @@ export interface ListeningRecordEntry {
   score: number
 }
 
+export interface UserProfile {
+  userId: number
+  nickname: string
+  avatar?: string
+  signature?: string
+  level: number
+  vipType: number
+  listenSongs: number
+  follows: number
+  followeds: number
+  playlistCount: number
+  eventCount: number
+  createTime?: number
+}
+
 export interface PlaylistSummary {
   id: number
   name: string

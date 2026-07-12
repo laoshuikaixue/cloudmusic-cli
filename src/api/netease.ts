@@ -15,6 +15,7 @@ import type {
   ScrobbleMode,
   Song,
   SourceResult,
+  UserProfile,
 } from '../core/types.js'
 
 const require = createRequire(import.meta.url)
@@ -318,6 +319,30 @@ export class NeteaseApi {
     const uid = status?.data?.profile?.userId || status?.profile?.userId
     if (!uid) throw new AppError('AUTH_REQUIRED', '需要先登录网易云账号')
     return Number(uid)
+  }
+
+  async userProfile(uid?: number): Promise<UserProfile> {
+    const userId = uid || (await this.currentUserId())
+    const result = await this.call<any>('user_detail_new', {
+      uid: userId,
+      timestamp: Date.now(),
+    }).catch(() => this.call<any>('user_detail', { uid: userId, timestamp: Date.now() }))
+    const profile = result?.profile || result?.data?.profile
+    if (!profile?.userId) throw new AppError('USER_NOT_FOUND', `未找到用户 ${userId}`)
+    return {
+      userId: Number(profile.userId),
+      nickname: String(profile.nickname || '网易云用户'),
+      avatar: profile.avatarUrl ? String(profile.avatarUrl) : undefined,
+      signature: profile.signature ? String(profile.signature) : undefined,
+      level: Number(result?.level || result?.data?.level || 0),
+      vipType: Number(profile.vipType || 0),
+      listenSongs: Number(result?.listenSongs || result?.data?.listenSongs || 0),
+      follows: Number(profile.follows || 0),
+      followeds: Number(profile.followeds || 0),
+      playlistCount: Number(profile.playlistCount || 0),
+      eventCount: Number(profile.eventCount || 0),
+      createTime: Number(profile.createTime || 0) || undefined,
+    }
   }
 
   logout() {

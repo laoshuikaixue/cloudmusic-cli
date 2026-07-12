@@ -296,6 +296,12 @@ login.command('verify').action(async () => output(await withDaemon('login.status
 login.command('logout').action(async () => output(await withDaemon('logout')))
 
 const library = program.command('library').description('网易云音乐库')
+library
+  .command('profile [uid]')
+  .description('查看当前账号或指定用户的网易云资料')
+  .action(async (uid) =>
+    output(await withDaemon('library.profile', uid === undefined ? {} : { uid: Number(uid) })),
+  )
 library.command('playlists').action(async () => output(await withDaemon('library.playlists')))
 library
   .command('playlist <id>')

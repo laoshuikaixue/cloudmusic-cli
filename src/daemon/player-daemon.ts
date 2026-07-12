@@ -742,6 +742,10 @@ export class PlayerDaemon {
         return { loggedIn: false }
       case 'library.playlists':
         return this.api.userPlaylists()
+      case 'library.profile':
+        return this.api.userProfile(
+          params.uid === undefined ? undefined : numberParam(params.uid, 'uid'),
+        )
       case 'library.playlist':
         return this.api.playlistTracks(numberParam(params.id, 'id'))
       case 'library.playlist.play':

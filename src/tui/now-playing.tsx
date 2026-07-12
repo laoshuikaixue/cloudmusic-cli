@@ -16,6 +16,7 @@ import type {
   QueueSnapshot,
   Song,
   SpectrumFrame,
+  UserProfile,
 } from '../core/types.js'
 
 type PageMode =
@@ -71,9 +72,22 @@ const newSongRegions = [
 const discoverEntries = [
   { kind: 'recommended', name: '为你推荐' },
   { kind: 'highquality', name: '精品歌单' },
-  ...['全部', '华语', '欧美', '日语', '韩语', '粤语', '流行', '摇滚', '民谣', '电子', '说唱', 'ACG', '古典', '治愈'].map(
-    (name) => ({ kind: 'category', name }),
-  ),
+  ...[
+    '全部',
+    '华语',
+    '欧美',
+    '日语',
+    '韩语',
+    '粤语',
+    '流行',
+    '摇滚',
+    '民谣',
+    '电子',
+    '说唱',
+    'ACG',
+    '古典',
+    '治愈',
+  ].map((name) => ({ kind: 'category', name })),
 ] as Array<{ kind: 'recommended' | 'highquality' | 'category'; name: string }>
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
@@ -137,6 +151,7 @@ export const NowPlaying = () => {
     peak: 0,
   })
   const [account, setAccount] = useState<AccountStatus>({ loggedIn: false, valid: false })
+  const [accountProfile, setAccountProfile] = useState<UserProfile | null>(null)
   const [queue, setQueue] = useState<QueueSnapshot>({ songs: [], index: -1 })
   const [mode, setMode] = useState<PageMode>('normal')
   const [inputValue, setInputValue] = useState('')
@@ -810,6 +825,27 @@ export const NowPlaying = () => {
     }
   }
 
+  const openAccountPage = async () => {
+    setAccountIndex(0)
+    setMode('account')
+    setMessage('正在加载网易云账号资料…')
+    try {
+      const status = await callDaemon<AccountStatus>('login.status')
+      setAccount(status)
+      if (status.loggedIn) {
+        const profile = await callDaemon<UserProfile>('library.profile')
+        setAccountProfile(profile)
+        setMessage(`账号资料已更新：${profile.nickname}`)
+      } else {
+        setAccountProfile(null)
+        setMessage('当前未登录')
+      }
+    } catch (error) {
+      setAccountProfile(null)
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const changeSetting = async (index: number, direction = 1) => {
     if (!settingsConfig) return
     try {
@@ -1216,8 +1252,7 @@ export const NowPlaying = () => {
       if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
       if (key.downArrow) return setSettingsIndex((index) => Math.min(6, index + 1))
       if (settingsIndex === 6 && (key.rightArrow || key.return || input === ' ')) {
-        setAccountIndex(0)
-        return setMode('account')
+        return void openAccountPage()
       }
       if (key.leftArrow) void changeSetting(settingsIndex, -1)
       if (key.rightArrow || key.return || input === ' ') void changeSetting(settingsIndex, 1)
@@ -1239,6 +1274,7 @@ export const NowPlaying = () => {
           void callDaemon('logout')
             .then(() => {
               setAccount({ loggedIn: false, valid: false })
+              setAccountProfile(null)
               setMessage('已退出网易云账号')
             })
             .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
@@ -1481,6 +1517,7 @@ export const NowPlaying = () => {
             '我的歌单',
             '每日推荐歌曲',
             '每日推荐歌单',
+            '歌单广场',
             '网易云官方榜单',
             '新歌速递',
             '私人 FM',
@@ -1495,6 +1532,20 @@ export const NowPlaying = () => {
             <Text key={label} color={index === libraryIndex ? 'cyan' : undefined}>
               {index === libraryIndex ? '▶ ' : '  '}
               {label}
+            </Text>
+          ))}
+        </>
+      ) : null}
+      {mode === 'discover-categories' ? (
+        <>
+          <Text bold>歌单广场（↑/↓ 选择分类，Enter 打开，Esc 返回）</Text>
+          {discoverEntries.map((entry, index) => (
+            <Text
+              key={`${entry.kind}-${entry.name}`}
+              color={index === libraryIndex ? 'cyan' : undefined}
+            >
+              {index === libraryIndex ? '▶ ' : '  '}
+              {entry.name}
             </Text>
           ))}
         </>
@@ -1518,7 +1569,9 @@ export const NowPlaying = () => {
               ? '（Enter 查看，c 创建，Shift+R 重命名，Shift+D 删除，f 收藏）'
               : playlistPageKind === 'daily'
                 ? '（Enter 查看，f 收藏，Esc 返回）'
-                : '（Enter 查看，Esc 返回）'}
+                : playlistPageKind === 'discover'
+                  ? '（Enter 查看，f 收藏，Esc 返回）'
+                  : '（Enter 查看，Esc 返回）'}
           </Text>
           {visiblePlaylists.map((playlist, offset) => {
             const index = playlistStart + offset
@@ -1656,6 +1709,21 @@ export const NowPlaying = () => {
               ? `${account.profile?.nickname || account.profile?.userId}（已登录）`
               : '未登录'}
           </Text>
+          {accountProfile ? (
+            <>
+              <Text dimColor>
+                Lv.{accountProfile.level} · 累计听歌 {accountProfile.listenSongs} · 关注{' '}
+                {accountProfile.follows} · 粉丝 {accountProfile.followeds}
+              </Text>
+              <Text dimColor>
+                歌单 {accountProfile.playlistCount} · 动态 {accountProfile.eventCount}
+                {accountProfile.vipType > 0 ? ' · 黑胶会员' : ''}
+              </Text>
+              {accountProfile.signature ? (
+                <Text dimColor>签名：{accountProfile.signature}</Text>
+              ) : null}
+            </>
+          ) : null}
         </>
       ) : null}
       {mode === 'qr' ? (
