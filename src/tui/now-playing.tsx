@@ -27,6 +27,7 @@ type PageMode =
   | 'playlists'
   | 'tracks'
   | 'settings'
+  | 'account'
   | 'collections'
 
 type LibrarySource =
@@ -113,15 +114,24 @@ export const NowPlaying = () => {
   const [librarySource, setLibrarySource] = useState<LibrarySource | null>(null)
   const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(null)
   const [settingsIndex, setSettingsIndex] = useState(0)
+  const [accountIndex, setAccountIndex] = useState(0)
   const [qrText, setQrText] = useState('')
-  const [message, setMessage] = useState('按 / 搜索歌曲，按 c 使用 Cookie 登录')
+  const [message, setMessage] = useState('按 / 搜索歌曲，按 o 打开设置')
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
   const qrTimer = useRef<NodeJS.Timeout | undefined>(undefined)
+  const controlBusy = useRef(false)
 
   const runControl = (method: string, params?: Record<string, unknown>) => {
-    void callDaemon(method, params).catch((error) =>
-      setMessage(error instanceof Error ? error.message : String(error)),
-    )
+    if (controlBusy.current) return
+    controlBusy.current = true
+    void callDaemon<PlaybackStatus>(method, params)
+      .then((result) => {
+        if (result?.daemon === 'running') setStatus(result)
+      })
+      .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
+      .finally(() => {
+        controlBusy.current = false
+      })
   }
 
   const refreshQueue = async () => {
@@ -438,7 +448,7 @@ export const NowPlaying = () => {
         profile: { userId: number; nickname: string; vipType: number }
       }>('login.cookie', { cookie })
       setAccount({ loggedIn: true, valid: true, profile: result.profile })
-      setMode('normal')
+      setMode('account')
       setMessage(`登录成功：${result.profile.nickname}，Cookie 已保存`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
@@ -463,14 +473,14 @@ export const NowPlaying = () => {
           if (check.loggedIn) {
             if (qrTimer.current) clearInterval(qrTimer.current)
             setAccount({ loggedIn: true, valid: true, profile: check.profile })
-            setMode('normal')
+            setMode('account')
             setQrText('')
             setMessage(`登录成功：${check.profile?.nickname || '网易云用户'}`)
           } else if (check.code === 800) {
             if (qrTimer.current) clearInterval(qrTimer.current)
-            setMode('normal')
+            setMode('account')
             setQrText('')
-            setMessage('二维码已过期，请按 g 重新生成')
+            setMessage('二维码已过期，请在账号设置中重新生成')
           }
         } catch (error) {
           setMessage(error instanceof Error ? error.message : String(error))
@@ -485,7 +495,7 @@ export const NowPlaying = () => {
     if (mode === 'search' || mode === 'cookie') {
       if (key.escape) {
         setInputValue('')
-        setMode('normal')
+        setMode(mode === 'cookie' ? 'account' : 'normal')
         return
       }
       if (key.return) {
@@ -586,9 +596,36 @@ export const NowPlaying = () => {
     if (mode === 'settings') {
       if (key.escape || input === 'o' || input === ',') return setMode('normal')
       if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setSettingsIndex((index) => Math.min(5, index + 1))
+      if (key.downArrow) return setSettingsIndex((index) => Math.min(6, index + 1))
+      if (settingsIndex === 6 && (key.rightArrow || key.return || input === ' ')) {
+        setAccountIndex(0)
+        return setMode('account')
+      }
       if (key.leftArrow) void changeSetting(settingsIndex, -1)
       if (key.rightArrow || key.return || input === ' ') void changeSetting(settingsIndex, 1)
+      return
+    }
+
+    if (mode === 'account') {
+      if (key.escape) return setMode('settings')
+      if (key.upArrow) return setAccountIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) return setAccountIndex((index) => Math.min(3, index + 1))
+      if (key.return) {
+        if (accountIndex === 0) {
+          setInputValue('')
+          return setMode('cookie')
+        }
+        if (accountIndex === 1) return void beginQrLogin()
+        if (accountIndex === 2) return void verifyAccount()
+        if (accountIndex === 3) {
+          void callDaemon('logout')
+            .then(() => {
+              setAccount({ loggedIn: false, valid: false })
+              setMessage('已退出网易云账号')
+            })
+            .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
+        }
+      }
       return
     }
 
@@ -596,7 +633,7 @@ export const NowPlaying = () => {
       if (key.escape) {
         if (qrTimer.current) clearInterval(qrTimer.current)
         setQrText('')
-        setMode('normal')
+        setMode('account')
       }
       return
     }
@@ -606,26 +643,11 @@ export const NowPlaying = () => {
       setInputValue('')
       return setMode('search')
     }
-    if (input === 'c') {
-      setInputValue('')
-      return setMode('cookie')
-    }
-    if (input === 'g') return void beginQrLogin()
     if (input === 'l') {
       setLibraryIndex(0)
       return setMode('library')
     }
     if (input === 'o' || input === ',') return void openSettings()
-    if (input === 'v') return void verifyAccount()
-    if (input === 'u') {
-      void callDaemon('logout')
-        .then(() => {
-          setAccount({ loggedIn: false, valid: false })
-          setMessage('已退出网易云账号')
-        })
-        .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
-      return
-    }
     if (key.tab) return setMode('queue')
     if (input === 'f' && status.song) {
       runControl('like', { id: status.song.id, liked: !status.liked })
@@ -674,6 +696,12 @@ export const NowPlaying = () => {
         ['解灰回退', settingsConfig.unblock.enabled ? '开启' : '关闭'],
         ['官方试听', settingsConfig.allowTrial ? '允许' : '关闭'],
         ['Windows SMTC', settingsConfig.smtc.enabled ? '开启' : '关闭'],
+        [
+          '网易云账号',
+          account.loggedIn
+            ? account.profile?.nickname || String(account.profile?.userId)
+            : '未登录',
+        ],
       ]
     : []
 
@@ -681,7 +709,7 @@ export const NowPlaying = () => {
     <Box marginTop={1} borderStyle="round" paddingX={1} flexDirection="column">
       {mode === 'normal' ? (
         <>
-          <Text>一页操作：/ 搜索 · l 音乐库 · Tab 队列 · c/g 登录 · v 验证 · u 退出账号</Text>
+          <Text>一页操作：/ 搜索 · l 音乐库 · Tab 队列 · o/, 设置</Text>
           <Text dimColor>
             Space 暂停 · 方向键进度/音量 · p/n 切歌 · f 喜欢 · m 模式 · o/, 设置
             {status.queueContext?.type === 'fm' ? ' · d FM 垃圾桶' : ''}
@@ -821,6 +849,23 @@ export const NowPlaying = () => {
             {status.lastScrobble
               ? `${status.lastScrobble.ok ? '成功' : '失败'} · ${status.lastScrobble.mode} · ${status.lastScrobble.playedSeconds}s`
               : '本次 daemon 启动后暂无记录'}
+          </Text>
+        </>
+      ) : null}
+      {mode === 'account' ? (
+        <>
+          <Text bold>账号设置（↑/↓ 选择，Enter 执行，Esc 返回设置）</Text>
+          {['Cookie 登录', '二维码登录', '验证账号', '退出账号'].map((label, index) => (
+            <Text key={label} color={index === accountIndex ? 'cyan' : undefined}>
+              {index === accountIndex ? '▶ ' : '  '}
+              {label}
+            </Text>
+          ))}
+          <Text dimColor>
+            当前账号：
+            {account.loggedIn
+              ? `${account.profile?.nickname || account.profile?.userId}（已登录）`
+              : '未登录'}
           </Text>
         </>
       ) : null}

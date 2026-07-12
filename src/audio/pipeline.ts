@@ -25,9 +25,23 @@ export class AudioPipeline extends EventEmitter {
   private position = 0
   private offset = 0
   private ffmpegError = ''
+  private transition: Promise<void> = Promise.resolve()
 
-  async start(url: string, options: PipelineOptions) {
-    await this.stop()
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.transition.then(operation, operation)
+    this.transition = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  start(url: string, options: PipelineOptions) {
+    return this.enqueue(() => this.startInternal(url, options))
+  }
+
+  private async startInternal(url: string, options: PipelineOptions) {
+    await this.stopInternal()
     this.stopping = false
     this.offset = options.offset || 0
     this.position = this.offset
@@ -90,7 +104,7 @@ export class AudioPipeline extends EventEmitter {
         windowsHide: true,
       })
     } catch (error) {
-      await this.stop()
+      await this.stopInternal()
       throw new AppError('FFMPEG_START_FAILED', '无法启动 FFmpeg', String(error))
     }
 
@@ -154,11 +168,19 @@ export class AudioPipeline extends EventEmitter {
     )
   }
 
-  async stop() {
+  stop() {
+    return this.enqueue(() => this.stopInternal())
+  }
+
+  private async stopInternal() {
     this.stopping = true
     if (this.pollTimer) clearInterval(this.pollTimer)
     this.pollTimer = undefined
     this.ffmpeg?.stdout.removeAllListeners()
+    this.ffmpeg?.removeAllListeners('close')
+    this.ffmpeg?.removeAllListeners('error')
+    this.mpv?.removeAllListeners('close')
+    this.mpv?.removeAllListeners('error')
     this.ffmpeg?.kill()
     this.mpv?.stdin.end()
     this.mpv?.kill()

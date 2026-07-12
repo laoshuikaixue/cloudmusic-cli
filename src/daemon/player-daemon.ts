@@ -61,16 +61,27 @@ export class PlayerDaemon {
   private scrobbleTimer?: NodeJS.Timeout
   private smtcTimer?: NodeJS.Timeout
   private readonly smtc = new SmtcBridge()
+  private controlQueue: Promise<void> = Promise.resolve()
+
+  private enqueueControl<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.controlQueue.then(operation, operation)
+    this.controlQueue = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
 
   private handleSmtcEvent(event: SmtcEvent) {
-    let operation: Promise<unknown> | undefined
-    if (event.event === 'play') operation = this.resume()
-    if (event.event === 'pause') operation = this.pause()
-    if (event.event === 'stop') operation = this.stop()
-    if (event.event === 'next') operation = this.next()
-    if (event.event === 'previous') operation = this.previous()
-    if (event.event === 'seek') operation = this.seek(event.positionMs / 1000)
-    void operation?.catch((error) => {
+    let operation: (() => Promise<unknown>) | undefined
+    if (event.event === 'play') operation = () => this.resume()
+    if (event.event === 'pause') operation = () => this.pause()
+    if (event.event === 'stop') operation = () => this.stop()
+    if (event.event === 'next') operation = () => this.next()
+    if (event.event === 'previous') operation = () => this.previous()
+    if (event.event === 'seek') operation = () => this.seek(event.positionMs / 1000)
+    if (!operation) return
+    void this.enqueueControl(operation).catch((error) => {
       this.error = error instanceof Error ? error.message : String(error)
     })
   }
@@ -81,7 +92,9 @@ export class PlayerDaemon {
     this.queue = await this.store.loadSession()
     this.history = await this.store.loadHistory()
     if (this.queue.index >= this.queue.songs.length) this.queue.index = this.queue.songs.length - 1
-    this.pipeline.on('ended', () => void this.onEnded())
+    this.pipeline.on('ended', () => {
+      void this.enqueueControl(() => this.onEnded())
+    })
     this.pipeline.on('error', (error: Error) => {
       this.state = 'error'
       this.error = error.message
@@ -466,6 +479,43 @@ export class PlayerDaemon {
   }
 
   async dispatch(method: string, params: Record<string, unknown> = {}) {
+    const serializedMethods = new Set([
+      'play',
+      'pause',
+      'resume',
+      'toggle',
+      'stop',
+      'next',
+      'previous',
+      'seek',
+      'volume',
+      'mode.set',
+      'queue.play',
+      'queue.replace',
+      'queue.append',
+      'queue.add',
+      'queue.remove',
+      'queue.move',
+      'queue.clear',
+      'library.playlist.play',
+      'library.daily.play',
+      'library.fm.play',
+      'library.fm.trash',
+      'library.history.play',
+      'library.history.clear',
+      'library.history.remove',
+      'library.cloud.play',
+      'library.album.play',
+      'library.artist.play',
+      'library.record.play',
+    ])
+    if (serializedMethods.has(method)) {
+      return this.enqueueControl(() => this.dispatchInternal(method, params))
+    }
+    return this.dispatchInternal(method, params)
+  }
+
+  private async dispatchInternal(method: string, params: Record<string, unknown> = {}) {
     switch (method) {
       case 'ping':
         return { pid: process.pid, version: '0.1.0' }
