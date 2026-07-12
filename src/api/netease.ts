@@ -253,8 +253,15 @@ export class NeteaseApi {
 
   async userPlaylists() {
     const uid = await this.currentUserId()
-    const result = await this.call<any>('user_playlist', { uid, limit: 100, offset: 0 })
-    return (result?.playlist || []).map(normalizePlaylist)
+    const playlists: PlaylistSummary[] = []
+    const limit = 100
+    for (let offset = 0; ; offset += limit) {
+      const result = await this.call<any>('user_playlist', { uid, limit, offset })
+      const page = (result?.playlist || []).map(normalizePlaylist)
+      playlists.push(...page)
+      if (!result?.more || page.length < limit) break
+    }
+    return playlists
   }
 
   async playlistDetail(id: number) {
@@ -268,8 +275,7 @@ export class NeteaseApi {
     const detail = await this.playlistDetail(id)
     const songs: Song[] = []
     const pageSize = 500
-    const expected = Math.max(0, detail.trackCount)
-    for (let offset = 0; offset < Math.max(expected, 1); offset += pageSize) {
+    for (let offset = 0; offset < 20_000; offset += pageSize) {
       const result = await this.call<any>('playlist_track_all', {
         id,
         limit: pageSize,
@@ -278,9 +284,9 @@ export class NeteaseApi {
       })
       const page = (result?.songs || []).map(normalizeSong)
       songs.push(...page)
-      if (page.length < pageSize || songs.length >= expected) break
+      if (page.length < pageSize) break
     }
-    return { playlist: detail, songs }
+    return { playlist: { ...detail, trackCount: songs.length }, songs }
   }
 
   async dailySongs() {
@@ -340,6 +346,6 @@ export class NeteaseApi {
         result,
       )
     }
-    return { mode: fn === 'scrobble_v1' ? 'ncbl' : 'legacy', result }
+    return { mode: (fn === 'scrobble_v1' ? 'ncbl' : 'legacy') as ScrobbleMode, result }
   }
 }

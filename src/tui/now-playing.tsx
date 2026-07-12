@@ -661,6 +661,12 @@ export const NowPlaying = () => {
             </Text>
           ))}
           <Text dimColor>听歌上报按真实播放时长自动触发，每个播放周期只提交一次。</Text>
+          <Text dimColor>
+            最近上报：
+            {status.lastScrobble
+              ? `${status.lastScrobble.ok ? '成功' : '失败'} · ${status.lastScrobble.mode} · ${status.lastScrobble.playedSeconds}s`
+              : '本次 daemon 启动后暂无记录'}
+          </Text>
         </>
       ) : null}
       {mode === 'qr' ? (

@@ -13,6 +13,12 @@ export const paths = {
   configFile: join(appPaths.config, 'config.json'),
   authFile: join(appPaths.config, 'auth.json'),
   sessionFile: join(appPaths.data, 'session.json'),
+  historyFile: join(appPaths.data, 'history.json'),
+  localLibraryFile: join(appPaths.data, 'local-library.json'),
+  cacheIndexFile: join(appPaths.data, 'song-cache.json'),
+  downloadTasksFile: join(appPaths.data, 'downloads.json'),
+  cacheDir: join(appPaths.cache, 'songs'),
+  downloadDir: join(appPaths.data, 'downloads'),
   daemonLog: join(appPaths.log, 'daemon.log'),
   smtcCoverFile: join(appPaths.data, 'smtc-cover.jpg'),
   daemonSocket:

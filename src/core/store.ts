@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { paths } from './paths.js'
-import type { AppConfig, QueueSnapshot } from './types.js'
+import type { AppConfig, HistoryEntry, QueueSnapshot, Song } from './types.js'
 
 const defaultConfig: AppConfig = {
   quality: 'exhigh',
@@ -93,5 +93,21 @@ export class AppStore {
 
   saveSession(session: QueueSnapshot) {
     return writeJson(paths.sessionFile, session)
+  }
+
+  loadHistory() {
+    return readJson<HistoryEntry[]>(paths.historyFile, [])
+  }
+
+  saveHistory(history: HistoryEntry[]) {
+    return writeJson(paths.historyFile, history.slice(0, 500))
+  }
+
+  loadLocalLibrary() {
+    return readJson<Song[]>(paths.localLibraryFile, [])
+  }
+
+  saveLocalLibrary(songs: Song[]) {
+    return writeJson(paths.localLibraryFile, songs)
   }
 }

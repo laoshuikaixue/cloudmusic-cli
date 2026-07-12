@@ -53,6 +53,7 @@ export class PlayerDaemon {
   private scrobbledCycle = -1
   private scrobblePlayedSeconds = 0
   private scrobbleLastTick = Date.now()
+  private lastScrobble?: PlaybackStatus['lastScrobble']
   private likedSongIds = new Set<number>()
   private scrobbleTimer?: NodeJS.Timeout
   private smtcTimer?: NodeJS.Timeout
@@ -338,6 +339,7 @@ export class PlayerDaemon {
       liked: this.song ? this.likedSongIds.has(this.song.id) : false,
       scrobbleEnabled: this.config.scrobble.enabled,
       scrobbleMode: this.config.scrobble.mode,
+      lastScrobble: this.lastScrobble,
       currentLyric: this.lyrics[lyricIndex]?.text,
       nextLyric: this.lyrics[lyricIndex + 1]?.text,
       error: this.error,
@@ -357,17 +359,31 @@ export class PlayerDaemon {
     const threshold = Math.min(duration / 2, 240)
     if (this.scrobblePlayedSeconds < threshold) return
     this.scrobbledCycle = this.cycle
-    await this.api
-      .scrobble(
+    try {
+      const result = await this.api.scrobble(
         song,
         this.scrobblePlayedSeconds,
         this.queue.context,
         this.config.scrobble.mode,
         this.source?.quality || this.config.quality,
       )
-      .catch(() => {
-        this.scrobbledCycle = -1
-      })
+      this.lastScrobble = {
+        songId: song.id,
+        mode: result.mode,
+        playedSeconds: Math.floor(this.scrobblePlayedSeconds),
+        timestamp: new Date().toISOString(),
+        ok: true,
+      }
+    } catch (error) {
+      this.lastScrobble = {
+        songId: song.id,
+        mode: this.config.scrobble.mode,
+        playedSeconds: Math.floor(this.scrobblePlayedSeconds),
+        timestamp: new Date().toISOString(),
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
   }
 
   async shutdown() {

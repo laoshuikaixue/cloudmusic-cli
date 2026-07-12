@@ -1,6 +1,14 @@
 export type PlaybackSource = 'official' | 'unblock' | 'trial' | 'local' | null
 export type PlaybackMode = 'sequence' | 'repeat-one' | 'shuffle'
-export type QueueContextType = 'manual' | 'search' | 'playlist' | 'daily' | 'fm' | 'liked'
+export type QueueContextType =
+  | 'manual'
+  | 'search'
+  | 'playlist'
+  | 'daily'
+  | 'fm'
+  | 'liked'
+  | 'history'
+  | 'local'
 export type ScrobbleMode = 'ncbl' | 'legacy'
 
 export interface Artist {
@@ -23,6 +31,14 @@ export interface Song {
   cover?: string
   fee?: number
   quality?: string
+  localPath?: string
+}
+
+export interface HistoryEntry {
+  song: Song
+  playedAt: number
+  listenedSeconds: number
+  context?: QueueContext
 }
 
 export interface PlaylistSummary {
@@ -72,6 +88,14 @@ export interface PlaybackStatus {
   liked?: boolean
   scrobbleEnabled?: boolean
   scrobbleMode?: ScrobbleMode
+  lastScrobble?: {
+    songId: number
+    mode: ScrobbleMode
+    playedSeconds: number
+    timestamp: string
+    ok: boolean
+    error?: string
+  }
   currentLyric?: string
   nextLyric?: string
   error?: string
@@ -89,6 +113,7 @@ export interface AppConfig {
   binaries: {
     mpv?: string
     ffmpeg?: string
+    ffprobe?: string
   }
   scrobble: {
     enabled: boolean

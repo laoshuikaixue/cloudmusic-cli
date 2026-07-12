@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeSong } from '../src/api/netease.js'
+import { normalizePlaylist, normalizeSong } from '../src/api/netease.js'
 
 describe('normalizeSong', () => {
   it('normalizes cloud search shapes', () => {
@@ -17,6 +17,28 @@ describe('normalizeSong', () => {
       artists: [{ id: 6452, name: '周杰伦' }],
       album: { id: 18905, name: '叶惠美', cover: 'cover' },
       duration: 269000,
+    })
+  })
+})
+
+describe('normalizePlaylist', () => {
+  it('normalizes user playlist metadata', () => {
+    expect(
+      normalizePlaylist({
+        id: 9265368428,
+        name: '体能训练',
+        coverImgUrl: 'cover',
+        trackCount: 3,
+        creator: { userId: 5035092974, nickname: 'LaoShui_' },
+      }),
+    ).toEqual({
+      id: 9265368428,
+      name: '体能训练',
+      cover: 'cover',
+      trackCount: 3,
+      description: undefined,
+      creator: { id: 5035092974, name: 'LaoShui_' },
+      subscribed: false,
     })
   })
 })

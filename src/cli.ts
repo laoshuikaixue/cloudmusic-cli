@@ -300,13 +300,14 @@ program
 const scrobble = program.command('scrobble').description('管理网易云听歌上报')
 scrobble.command('status').action(async () => {
   const config = await withDaemon<any>('config.get')
-  output(config.scrobble)
+  const status = await withDaemon<PlaybackStatus>('status')
+  output({ ...config.scrobble, lastScrobble: status.lastScrobble })
 })
 scrobble.command('enable').action(async () => {
   const config = await withDaemon<any>('config.get')
   output(
     await withDaemon('config.set', {
-      patch: { scrobble: { ...config.scrobble, enabled: true } },
+      patch: { scrobble: { ...config.scrobble, enabled: true, configured: true } },
     }),
   )
 })
@@ -314,7 +315,7 @@ scrobble.command('disable').action(async () => {
   const config = await withDaemon<any>('config.get')
   output(
     await withDaemon('config.set', {
-      patch: { scrobble: { ...config.scrobble, enabled: false } },
+      patch: { scrobble: { ...config.scrobble, enabled: false, configured: true } },
     }),
   )
 })
@@ -326,7 +327,7 @@ scrobble
     const config = await withDaemon<any>('config.get')
     output(
       await withDaemon('config.set', {
-        patch: { scrobble: { ...config.scrobble, mode } },
+        patch: { scrobble: { ...config.scrobble, mode, configured: true } },
       }),
     )
   })

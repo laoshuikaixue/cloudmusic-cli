@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { ensureDaemon, requestDaemonResilient } from '../ipc/client.js'
+import type { AppConfig } from '../core/types.js'
 
 const tools = [
   {
@@ -123,6 +124,23 @@ const tools = [
     },
   },
   {
+    name: 'configure_player',
+    description: '配置音质、解灰、试听、听歌上报开关和 NCBL/legacy 上报方式。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        quality: {
+          type: 'string',
+          enum: ['standard', 'higher', 'exhigh', 'lossless', 'hires'],
+        },
+        unblockEnabled: { type: 'boolean' },
+        allowTrial: { type: 'boolean' },
+        scrobbleEnabled: { type: 'boolean' },
+        scrobbleMode: { type: 'string', enum: ['ncbl', 'legacy'] },
+      },
+    },
+  },
+  {
     name: 'like_song',
     description: '喜欢或取消喜欢一首歌曲。',
     inputSchema: {
@@ -178,6 +196,30 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
     }
     case 'set_playback_mode':
       return request('mode.set', args)
+    case 'configure_player': {
+      const current = (await request('config.get')) as AppConfig
+      return request('config.set', {
+        patch: {
+          ...(typeof args.quality === 'string' ? { quality: args.quality } : {}),
+          ...(typeof args.allowTrial === 'boolean' ? { allowTrial: args.allowTrial } : {}),
+          ...(typeof args.unblockEnabled === 'boolean'
+            ? { unblock: { ...current.unblock, enabled: args.unblockEnabled } }
+            : {}),
+          ...(typeof args.scrobbleEnabled === 'boolean' || typeof args.scrobbleMode === 'string'
+            ? {
+                scrobble: {
+                  ...current.scrobble,
+                  ...(typeof args.scrobbleEnabled === 'boolean'
+                    ? { enabled: args.scrobbleEnabled }
+                    : {}),
+                  ...(typeof args.scrobbleMode === 'string' ? { mode: args.scrobbleMode } : {}),
+                  configured: true,
+                },
+              }
+            : {}),
+        },
+      })
+    }
     case 'like_song':
       return request('like', args)
     default:
