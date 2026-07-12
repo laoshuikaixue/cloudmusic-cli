@@ -9,8 +9,7 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE",
-    "NOTICE"
+    "LICENSE"
   ],
   "scripts": {
     "dev": "tsx src/cli.ts",

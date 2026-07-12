@@ -192,4 +192,9 @@ pnpm build
 
 本项目采用 GNU Affero General Public License v3.0 only。AGPL 允许商业使用，但修改版本及通过网络提供的服务必须按许可证提供对应源码。
 
-本项目参考 SPlayer 的产品流程与播放状态设计；相关归属见 [NOTICE](NOTICE)。
+## 致谢
+
+本项目参考和使用了：
+
+- [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)
+- [SPlayer-Dev/SPlayer](https://github.com/SPlayer-Dev/SPlayer)
