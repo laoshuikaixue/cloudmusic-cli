@@ -10,6 +10,7 @@ import type {
   AppConfig,
   HistoryEntry,
   LyricLine,
+  NewSongArea,
   PlaybackStatus,
   QueueSnapshot,
   Song,
@@ -358,6 +359,20 @@ export class PlayerDaemon {
   async playDaily(index = 0) {
     const songs = await this.api.dailySongs()
     return this.replaceQueue(songs, index, { type: 'daily', name: '每日推荐' })
+  }
+
+  async playToplist(id: number, index = 0) {
+    const result = await this.api.toplist(id)
+    return this.replaceQueue(result.songs, index, {
+      type: 'toplist',
+      id: result.playlist.id,
+      name: result.playlist.name,
+    })
+  }
+
+  async playNewSongs(area: NewSongArea, index = 0) {
+    const result = await this.api.newSongs(area)
+    return this.replaceQueue(result.songs, index, { type: 'new', id: area, name: result.name })
   }
 
   async playFm() {
@@ -756,6 +771,24 @@ export class PlayerDaemon {
         return this.playDaily(params.index === undefined ? 0 : numberParam(params.index, 'index'))
       case 'library.daily.playlists':
         return this.api.dailyPlaylists()
+      case 'library.toplists':
+        return this.api.toplists()
+      case 'library.toplist':
+        return this.api.toplist(numberParam(params.id, 'id'))
+      case 'library.toplist.play':
+        return this.playToplist(
+          numberParam(params.id, 'id'),
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
+      case 'library.new':
+        return this.api.newSongs(
+          (params.area === undefined ? 0 : numberParam(params.area, 'area')) as NewSongArea,
+        )
+      case 'library.new.play':
+        return this.playNewSongs(
+          (params.area === undefined ? 0 : numberParam(params.area, 'area')) as NewSongArea,
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
       case 'library.fm':
         return this.api.personalFm()
       case 'library.fm.play':

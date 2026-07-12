@@ -365,6 +365,33 @@ library
 library
   .command('daily-playlists')
   .action(async () => output(await withDaemon('library.daily.playlists')))
+library.command('toplists').action(async () => output(await withDaemon('library.toplists')))
+library
+  .command('toplist <id>')
+  .option('--play', '播放整个官方榜单')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (id, options) =>
+    output(
+      await withDaemon(options.play ? 'library.toplist.play' : 'library.toplist', {
+        id: Number(id),
+        index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('new')
+  .description('查看或播放新歌速递：0 全部，7 华语，96 欧美，8 日本，16 韩国')
+  .option('--area <area>', '地区 ID', '0')
+  .option('--play', '播放该地区新歌队列')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon(options.play ? 'library.new.play' : 'library.new', {
+        area: Number(options.area),
+        index: Number(options.index),
+      }),
+    ),
+  )
 library
   .command('fm')
   .option('--play', '进入私人 FM 并自动续取')

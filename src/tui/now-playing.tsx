@@ -36,6 +36,7 @@ type PageMode =
   | 'account'
   | 'comments'
   | 'collections'
+  | 'new-regions'
 
 type LibrarySource =
   | { type: 'playlist'; id: number; name: string; owned: boolean }
@@ -45,6 +46,8 @@ type LibrarySource =
   | { type: 'album'; id: number; name: string }
   | { type: 'artist'; id: number; name: string }
   | { type: 'record'; range: 'week' | 'all'; name: string }
+  | { type: 'toplist'; id: number; name: string }
+  | { type: 'new'; area: number; name: string }
 
 type SearchType = 'song' | 'playlist' | 'album' | 'artist'
 
@@ -55,6 +58,14 @@ const searchTypeLabels: Record<SearchType, string> = {
   album: '专辑',
   artist: '歌手',
 }
+
+const newSongRegions = [
+  { area: 0, name: '全部新歌' },
+  { area: 7, name: '华语新歌' },
+  { area: 96, name: '欧美新歌' },
+  { area: 8, name: '日本新歌' },
+  { area: 16, name: '韩国新歌' },
+] as const
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
   return requestDaemonResilient<T>(method, params)
@@ -129,6 +140,9 @@ export const NowPlaying = () => {
   const [queueIndex, setQueueIndex] = useState(0)
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
   const [playlistPageTitle, setPlaylistPageTitle] = useState('我的歌单')
+  const [playlistPageKind, setPlaylistPageKind] = useState<'library' | 'daily' | 'toplist'>(
+    'library',
+  )
   const [playlistEditAction, setPlaylistEditAction] = useState<'create' | 'rename'>('create')
   const [playlistEditTarget, setPlaylistEditTarget] = useState<PlaylistSummary | null>(null)
   const [playlistPickerSong, setPlaylistPickerSong] = useState<Song | null>(null)
@@ -494,6 +508,7 @@ export const NowPlaying = () => {
       const result = await callDaemon<PlaylistSummary[]>('library.playlists')
       setPlaylists(result)
       setPlaylistPageTitle('我的歌单')
+      setPlaylistPageKind('library')
       setLibraryIndex(0)
       setMode('playlists')
       setMessage(`已加载 ${result.length} 个歌单`)
@@ -546,9 +561,63 @@ export const NowPlaying = () => {
       const result = await callDaemon<PlaylistSummary[]>('library.daily.playlists')
       setPlaylists(result)
       setPlaylistPageTitle('每日推荐歌单')
+      setPlaylistPageKind('daily')
       setLibraryIndex(0)
       setMode('playlists')
       setMessage(`每日推荐歌单 · ${result.length} 个`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openToplists = async () => {
+    setMessage('正在加载网易云官方榜单…')
+    try {
+      const result = await callDaemon<PlaylistSummary[]>('library.toplists')
+      setPlaylists(result)
+      setPlaylistPageTitle('网易云官方榜单')
+      setPlaylistPageKind('toplist')
+      setLibraryIndex(0)
+      setMode('playlists')
+      setMessage(`官方榜单 · ${result.length} 个`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openToplist = async (toplist: PlaylistSummary) => {
+    setMessage(`正在加载榜单：${toplist.name}…`)
+    try {
+      const result = await callDaemon<{ playlist: PlaylistSummary; songs: Song[] }>(
+        'library.toplist',
+        { id: toplist.id },
+      )
+      setLibrarySongs(result.songs)
+      setLibrarySource({ type: 'toplist', id: toplist.id, name: toplist.name })
+      setTrackReturnMode('playlists')
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`${toplist.name} · ${result.songs.length} 首歌曲`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openNewSongs = async (area: number, name: string) => {
+    setMessage(`正在加载${name}…`)
+    try {
+      const result = await callDaemon<{ area: number; name: string; songs: Song[] }>(
+        'library.new',
+        {
+          area,
+        },
+      )
+      setLibrarySongs(result.songs)
+      setLibrarySource({ type: 'new', area: result.area, name: result.name })
+      setTrackReturnMode('new-regions')
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`${result.name} · ${result.songs.length} 首歌曲`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -657,6 +726,10 @@ export const NowPlaying = () => {
         await callDaemon('library.artist.play', { id: librarySource.id, index })
       } else if (librarySource.type === 'record') {
         await callDaemon('library.record.play', { range: librarySource.range, index })
+      } else if (librarySource.type === 'toplist') {
+        await callDaemon('library.toplist.play', { id: librarySource.id, index })
+      } else if (librarySource.type === 'new') {
+        await callDaemon('library.new.play', { area: librarySource.area, index })
       }
       await refreshQueue()
       setMode('normal')
@@ -954,19 +1027,37 @@ export const NowPlaying = () => {
     if (mode === 'library') {
       if (key.escape || input === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(10, index + 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(12, index + 1))
       if (key.return) {
         if (libraryIndex === 0) void openPlaylists()
         if (libraryIndex === 1) void openDaily()
         if (libraryIndex === 2) void openDailyPlaylists()
-        if (libraryIndex === 3) void playFm()
-        if (libraryIndex === 4) void playHeartMode()
-        if (libraryIndex === 5) void openHistory()
-        if (libraryIndex === 6) void openCloud()
-        if (libraryIndex === 7) void openCollections('album')
-        if (libraryIndex === 8) void openCollections('artist')
-        if (libraryIndex === 9) void openListeningRecord('week')
-        if (libraryIndex === 10) void openListeningRecord('all')
+        if (libraryIndex === 3) void openToplists()
+        if (libraryIndex === 4) {
+          setLibraryIndex(0)
+          setMode('new-regions')
+        }
+        if (libraryIndex === 5) void playFm()
+        if (libraryIndex === 6) void playHeartMode()
+        if (libraryIndex === 7) void openHistory()
+        if (libraryIndex === 8) void openCloud()
+        if (libraryIndex === 9) void openCollections('album')
+        if (libraryIndex === 10) void openCollections('artist')
+        if (libraryIndex === 11) void openListeningRecord('week')
+        if (libraryIndex === 12) void openListeningRecord('all')
+      }
+      return
+    }
+
+    if (mode === 'new-regions') {
+      if (key.escape) return setMode('library')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setLibraryIndex((index) => Math.min(newSongRegions.length - 1, index + 1))
+      }
+      if (key.return && newSongRegions[libraryIndex]) {
+        const region = newSongRegions[libraryIndex]
+        void openNewSongs(region.area, region.name)
       }
       return
     }
@@ -976,17 +1067,20 @@ export const NowPlaying = () => {
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
       if (key.downArrow)
         return setLibraryIndex((index) => Math.min(playlists.length - 1, index + 1))
-      if (key.return && playlists[libraryIndex]) void openPlaylist(playlists[libraryIndex])
-      if (input === 'f' && playlists[libraryIndex]) {
+      if (key.return && playlists[libraryIndex]) {
+        if (playlistPageKind === 'toplist') void openToplist(playlists[libraryIndex])
+        else void openPlaylist(playlists[libraryIndex])
+      }
+      if (input === 'f' && playlistPageKind !== 'toplist' && playlists[libraryIndex]) {
         void togglePlaylistSubscription(playlists[libraryIndex])
       }
-      if (input === 'c') {
+      if (input === 'c' && playlistPageKind === 'library') {
         setPlaylistEditAction('create')
         setPlaylistEditTarget(null)
         setInputValue('')
         setMode('playlist-edit')
       }
-      if (input === 'R' && playlists[libraryIndex]) {
+      if (input === 'R' && playlistPageKind === 'library' && playlists[libraryIndex]) {
         const playlist = playlists[libraryIndex]
         if (playlist.creator?.id !== account.profile?.userId) {
           setMessage('只能重命名自己的歌单')
@@ -997,7 +1091,7 @@ export const NowPlaying = () => {
           setMode('playlist-edit')
         }
       }
-      if (input === 'D' && playlists[libraryIndex]) {
+      if (input === 'D' && playlistPageKind === 'library' && playlists[libraryIndex]) {
         void deleteOwnedPlaylist(playlists[libraryIndex])
       }
       return
@@ -1336,6 +1430,8 @@ export const NowPlaying = () => {
             '我的歌单',
             '每日推荐歌曲',
             '每日推荐歌单',
+            '网易云官方榜单',
+            '新歌速递',
             '私人 FM',
             '心动模式',
             '最近播放',
@@ -1352,10 +1448,26 @@ export const NowPlaying = () => {
           ))}
         </>
       ) : null}
+      {mode === 'new-regions' ? (
+        <>
+          <Text bold>新歌速递（↑/↓ 选择地区，Enter 打开，Esc 返回）</Text>
+          {newSongRegions.map((region, index) => (
+            <Text key={region.area} color={index === libraryIndex ? 'cyan' : undefined}>
+              {index === libraryIndex ? '▶ ' : '  '}
+              {region.name}
+            </Text>
+          ))}
+        </>
+      ) : null}
       {mode === 'playlists' ? (
         <>
           <Text bold>
-            {playlistPageTitle}（Enter 查看，c 创建，Shift+R 重命名，Shift+D 删除，f 收藏）
+            {playlistPageTitle}
+            {playlistPageKind === 'library'
+              ? '（Enter 查看，c 创建，Shift+R 重命名，Shift+D 删除，f 收藏）'
+              : playlistPageKind === 'daily'
+                ? '（Enter 查看，f 收藏，Esc 返回）'
+                : '（Enter 查看，Esc 返回）'}
           </Text>
           {visiblePlaylists.map((playlist, offset) => {
             const index = playlistStart + offset
@@ -1364,6 +1476,7 @@ export const NowPlaying = () => {
                 {index === libraryIndex ? '▶ ' : '  '}
                 {playlist.subscribed ? '♥ ' : ''}
                 {playlist.name} · {playlist.trackCount} 首
+                {playlist.updateFrequency ? ` · ${playlist.updateFrequency}` : ''}
               </Text>
             )
           })}

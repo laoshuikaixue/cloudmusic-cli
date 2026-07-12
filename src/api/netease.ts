@@ -9,6 +9,7 @@ import type {
   LyricLine,
   CommentPage,
   MusicComment,
+  NewSongArea,
   PlaylistSummary,
   QueueContext,
   ScrobbleMode,
@@ -68,7 +69,16 @@ export const normalizePlaylist = (raw: any): PlaylistSummary => ({
     : undefined,
   subscribed: Boolean(raw?.subscribed),
   specialType: Number(raw?.specialType || 0),
+  updateFrequency: raw?.updateFrequency ? String(raw.updateFrequency) : undefined,
 })
+
+const newSongAreaNames: Record<NewSongArea, string> = {
+  0: '全部新歌',
+  7: '华语新歌',
+  96: '欧美新歌',
+  8: '日本新歌',
+  16: '韩国新歌',
+}
 
 const normalizeComment = (raw: any): MusicComment => ({
   id: Number(raw?.commentId || raw?.id),
@@ -384,7 +394,8 @@ export class NeteaseApi {
       await this.call<any>('playlist_create', { name, privacy, timestamp: Date.now() }),
       '创建歌单',
     )
-    if (!result?.playlist?.id) throw new AppError('PLAYLIST_CREATE_FAILED', '创建歌单未返回歌单信息')
+    if (!result?.playlist?.id)
+      throw new AppError('PLAYLIST_CREATE_FAILED', '创建歌单未返回歌单信息')
     return normalizePlaylist(result.playlist)
   }
 
@@ -449,6 +460,27 @@ export class NeteaseApi {
   async dailyPlaylists() {
     const result = await this.call<any>('recommend_resource', { timestamp: Date.now() })
     return (result?.recommend || []).map(normalizePlaylist)
+  }
+
+  async toplists() {
+    const result = await this.call<any>('toplist', { timestamp: Date.now() })
+    return (result?.list || []).map(normalizePlaylist)
+  }
+
+  async toplist(id: number) {
+    const result = await this.call<any>('top_list', { id, timestamp: Date.now() })
+    const playlist = result?.playlist
+    if (!playlist?.id) throw new AppError('TOPLIST_NOT_FOUND', `未找到榜单 ${id}`)
+    const songs = (playlist?.tracks || []).map(normalizeSong)
+    return { playlist: { ...normalizePlaylist(playlist), trackCount: songs.length }, songs }
+  }
+
+  async newSongs(area: NewSongArea = 0) {
+    if (!(area in newSongAreaNames)) {
+      throw new AppError('INVALID_ARGUMENT', '新歌地区必须是 0、7、96、8 或 16')
+    }
+    const result = await this.call<any>('top_song', { type: area, timestamp: Date.now() })
+    return { area, name: newSongAreaNames[area], songs: (result?.data || []).map(normalizeSong) }
   }
 
   async heartMode(seedId: number) {

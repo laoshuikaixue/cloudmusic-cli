@@ -97,6 +97,36 @@ const tools = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'get_toplists',
+    description: '获取网易云官方榜单列表。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'open_toplist',
+    description: '获取或播放指定网易云官方榜单。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        index: { type: 'number', default: 0 },
+        play: { type: 'boolean', default: false },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'get_new_songs',
+    description: '获取或播放新歌速递，地区支持 0 全部、7 华语、96 欧美、8 日本、16 韩国。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        area: { type: 'number', enum: [0, 7, 96, 8, 16], default: 0 },
+        index: { type: 'number', default: 0 },
+        play: { type: 'boolean', default: false },
+      },
+    },
+  },
+  {
     name: 'get_playlist_tracks',
     description: '获取指定网易云歌单的完整歌曲列表。',
     inputSchema: {
@@ -342,6 +372,12 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.playlists')
     case 'get_daily_recommendations':
       return request('library.daily')
+    case 'get_toplists':
+      return request('library.toplists')
+    case 'open_toplist':
+      return request(args.play === true ? 'library.toplist.play' : 'library.toplist', args)
+    case 'get_new_songs':
+      return request(args.play === true ? 'library.new.play' : 'library.new', args)
     case 'get_playlist_tracks':
       return request('library.playlist', args)
     case 'subscribe_playlist':

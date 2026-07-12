@@ -13,7 +13,10 @@ export type QueueContextType =
   | 'album'
   | 'artist'
   | 'record'
+  | 'toplist'
+  | 'new'
 export type ScrobbleMode = 'ncbl' | 'legacy'
+export type NewSongArea = 0 | 7 | 96 | 8 | 16
 
 export interface Artist {
   id?: number
@@ -75,6 +78,7 @@ export interface PlaylistSummary {
   creator?: { id?: number; name: string }
   subscribed?: boolean
   specialType?: number
+  updateFrequency?: string
 }
 
 export interface MusicComment {

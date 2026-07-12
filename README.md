@@ -71,6 +71,10 @@ ncm library playlist-tracks 123456 186016 255858
 ncm library playlist-tracks 123456 186016 --remove
 ncm library playlist-delete 123456
 ncm library daily --play
+ncm library daily-playlists
+ncm library toplists
+ncm library toplist <id> --play
+ncm library new --area 7 --play
 ncm library fm --play
 ncm library heart --play
 ncm library fm-trash
