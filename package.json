@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "pnpm build:js && pnpm build:native",
-    "build:js": "tsup src/cli.ts --format esm --platform node --target node20 --sourcemap",
+    "build:js": "tsup src/cli.ts --format esm --platform node --target node22 --sourcemap",
     "build:native": "node scripts/build-native.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -25,7 +25,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
   },
   "engines": {
-    "node": ">=20",
+    "node": ">=22",
     "pnpm": ">=10"
   },
   "packageManager": "pnpm@10.29.3",
