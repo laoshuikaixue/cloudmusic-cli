@@ -126,16 +126,16 @@ const tools = [
     },
   },
   {
-    name: 'manage_local_music',
-    description: '列出、扫描或播放本地音乐库。',
+    name: 'get_cloud_music',
+    description: '获取登录账号的网易云音乐云盘歌曲和容量信息。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'play_cloud_music',
+    description: '将音乐云盘歌曲作为队列播放。',
     inputSchema: {
       type: 'object',
-      properties: {
-        action: { type: 'string', enum: ['list', 'scan', 'play'] },
-        path: { type: 'string' },
-        index: { type: 'number', default: 0 },
-      },
-      required: ['action'],
+      properties: { index: { type: 'number', default: 0 } },
     },
   },
   {
@@ -224,12 +224,10 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.history')
     case 'play_history':
       return request('library.history.play', args)
-    case 'manage_local_music': {
-      const action = String(args.action)
-      if (action === 'scan') return request('library.local.scan', { path: args.path })
-      if (action === 'play') return request('library.local.play', { index: args.index })
-      return request('library.local')
-    }
+    case 'get_cloud_music':
+      return request('library.cloud')
+    case 'play_cloud_music':
+      return request('library.cloud.play', args)
     case 'set_playback_mode':
       return request('mode.set', args)
     case 'configure_player': {

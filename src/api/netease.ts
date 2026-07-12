@@ -3,6 +3,7 @@ import { AppError } from '../core/errors.js'
 import { mergeLyrics } from '../core/lyrics.js'
 import type {
   AppConfig,
+  CloudLibrary,
   LyricLine,
   PlaylistSummary,
   QueueContext,
@@ -312,6 +313,31 @@ export class NeteaseApi {
     const uid = await this.currentUserId()
     const result = await this.call<any>('likelist', { uid, timestamp: Date.now() })
     return (result?.ids || []).map(Number).filter(Number.isFinite)
+  }
+
+  async cloudSongs(): Promise<CloudLibrary> {
+    const songs: Song[] = []
+    const limit = 200
+    let count = 0
+    let size = 0
+    let maxSize = 0
+    for (let offset = 0; ; offset += limit) {
+      const result = await this.call<any>('user_cloud', {
+        limit,
+        offset,
+        timestamp: Date.now(),
+      })
+      const page = (result?.data || [])
+        .map((item: any) => item?.simpleSong || item?.song || item)
+        .filter((item: any) => item?.id)
+        .map(normalizeSong)
+      songs.push(...page)
+      count = Number(result?.count || songs.length)
+      size = Number(result?.size || 0)
+      maxSize = Number(result?.maxSize || 0)
+      if (!result?.hasMore || page.length < limit) break
+    }
+    return { songs, count: Math.max(count, songs.length), size, maxSize }
   }
 
   like(id: number, liked: boolean) {

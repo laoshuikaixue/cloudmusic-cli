@@ -304,24 +304,15 @@ library
   .command('history-clear')
   .action(async () => output(await withDaemon('library.history.clear')))
 library
-  .command('local')
-  .option('--play', '播放本地音乐库')
+  .command('cloud')
+  .option('--play', '播放音乐云盘全部歌曲')
   .option('--index <index>', '从指定索引开始播放', '0')
   .action(async (options) =>
     output(
-      await withDaemon(options.play ? 'library.local.play' : 'library.local', {
+      await withDaemon(options.play ? 'library.cloud.play' : 'library.cloud', {
         index: Number(options.index),
       }),
     ),
-  )
-library
-  .command('local-scan <path>')
-  .description('扫描本地音乐文件或目录')
-  .action(async (path) => output(await withDaemon('library.local.scan', { path })))
-library
-  .command('local-remove <index>')
-  .action(async (index) =>
-    output(await withDaemon('library.local.remove', { index: Number(index) })),
   )
 
 program

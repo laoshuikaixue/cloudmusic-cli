@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process'
 import { AudioPipeline } from '../audio/pipeline.js'
-import { scanLocalSongs } from '../audio/local-library.js'
 import { NeteaseApi } from '../api/netease.js'
 import { AppError } from '../core/errors.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
@@ -45,7 +44,6 @@ export class PlayerDaemon {
   private readonly pipeline = new AudioPipeline()
   private queue: QueueSnapshot = { songs: [], index: -1 }
   private history: HistoryEntry[] = []
-  private localSongs: Song[] = []
   private activeHistorySong?: Song
   private config!: AppConfig
   private state: PlaybackStatus['state'] = 'idle'
@@ -82,7 +80,6 @@ export class PlayerDaemon {
     this.config = this.store.getConfig()
     this.queue = await this.store.loadSession()
     this.history = await this.store.loadHistory()
-    this.localSongs = await this.store.loadLocalLibrary()
     if (this.queue.index >= this.queue.songs.length) this.queue.index = this.queue.songs.length - 1
     this.pipeline.on('ended', () => void this.onEnded())
     this.pipeline.on('error', (error: Error) => {
@@ -122,7 +119,7 @@ export class PlayerDaemon {
   }
 
   private historyKey(song: Song) {
-    return song.localPath ? `local:${song.localPath.toLowerCase()}` : `netease:${song.id}`
+    return `netease:${song.id}`
   }
 
   private async finalizeHistory() {
@@ -150,21 +147,10 @@ export class PlayerDaemon {
     this.state = 'loading'
     this.error = undefined
     this.resetPlaybackCycle()
-    const [source, lyricResult] = song.localPath
-      ? [
-          {
-            url: song.localPath,
-            source: 'local' as const,
-            sourceName: 'local-file',
-            trial: false,
-            quality: song.quality || 'local',
-          },
-          { lines: [], raw: null },
-        ]
-      : await Promise.all([
-          this.api.resolveSource(song.id, this.config),
-          this.api.lyrics(song.id).catch(() => ({ lines: [], raw: null })),
-        ])
+    const [source, lyricResult] = await Promise.all([
+      this.api.resolveSource(song.id, this.config),
+      this.api.lyrics(song.id).catch(() => ({ lines: [], raw: null })),
+    ])
     this.source = source
     this.currentUrl = source.url
     this.sourceResolvedAt = Date.now()
@@ -248,16 +234,7 @@ export class PlayerDaemon {
       0,
       Math.min(duration || Infinity, relative ? current + target : target),
     )
-    if (song.localPath) {
-      this.currentUrl = song.localPath
-      this.source = {
-        url: song.localPath,
-        source: 'local',
-        sourceName: 'local-file',
-        trial: false,
-        quality: song.quality || 'local',
-      }
-    } else if (!this.currentUrl || Date.now() - this.sourceResolvedAt > 8 * 60 * 1000) {
+    if (!this.currentUrl || Date.now() - this.sourceResolvedAt > 8 * 60 * 1000) {
       this.source = await this.api.resolveSource(song.id, this.config)
       this.currentUrl = this.source.url
       this.sourceResolvedAt = Date.now()
@@ -380,26 +357,9 @@ export class PlayerDaemon {
     )
   }
 
-  async scanLocal(input: string) {
-    const result = await scanLocalSongs(input, this.config.binaries.ffprobe || 'ffprobe')
-    const merged = new Map(
-      this.localSongs
-        .filter((song) => song.localPath)
-        .map((song) => [song.localPath!.toLowerCase(), song]),
-    )
-    for (const song of result.songs) merged.set(song.localPath!.toLowerCase(), song)
-    this.localSongs = [...merged.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
-    await this.store.saveLocalLibrary(this.localSongs)
-    return {
-      scanned: result.songs.length,
-      total: this.localSongs.length,
-      errors: result.errors,
-      songs: this.localSongs,
-    }
-  }
-
-  async playLocal(index = 0) {
-    return this.replaceQueue(this.localSongs, index, { type: 'local', name: '本地音乐' })
+  async playCloud(index = 0) {
+    const cloud = await this.api.cloudSongs()
+    return this.replaceQueue(cloud.songs, index, { type: 'cloud', name: '音乐云盘' })
   }
 
   status(): PlaybackStatus {
@@ -436,7 +396,7 @@ export class PlayerDaemon {
     this.scrobbleLastTick = now
     if (this.state === 'playing') this.scrobblePlayedSeconds += elapsed
     const song = this.song
-    if (!this.config.scrobble.enabled || !song || song.localPath || !this.store.getCookie()) return
+    if (!this.config.scrobble.enabled || !song || !this.store.getCookie()) return
     if (this.scrobbledCycle === this.cycle) return
     const duration = song.duration / 1000
     if (duration <= 30) return
@@ -657,21 +617,10 @@ export class PlayerDaemon {
         await this.store.saveHistory(this.history)
         return this.history
       }
-      case 'library.local':
-        return this.localSongs
-      case 'library.local.scan':
-        return this.scanLocal(stringParam(params.path, 'path'))
-      case 'library.local.play':
-        return this.playLocal(params.index === undefined ? 0 : numberParam(params.index, 'index'))
-      case 'library.local.remove': {
-        const index = numberParam(params.index, 'index')
-        if (index < 0 || index >= this.localSongs.length) {
-          throw new AppError('INVALID_ARGUMENT', '本地音乐索引超出范围')
-        }
-        this.localSongs.splice(index, 1)
-        await this.store.saveLocalLibrary(this.localSongs)
-        return this.localSongs
-      }
+      case 'library.cloud':
+        return this.api.cloudSongs()
+      case 'library.cloud.play':
+        return this.playCloud(params.index === undefined ? 0 : numberParam(params.index, 'index'))
       case 'like': {
         const id = numberParam(params.id, 'id')
         const liked = params.liked !== false
@@ -746,7 +695,6 @@ export class PlayerDaemon {
       node: { ok: Number(process.versions.node.split('.')[0]) >= 20, version: process.version },
       mpv: inspect(this.config.binaries.mpv || 'mpv', '--version'),
       ffmpeg: inspect(this.config.binaries.ffmpeg || 'ffmpeg', '-version'),
-      ffprobe: inspect(this.config.binaries.ffprobe || 'ffprobe', '-version'),
       api: apiStatus,
       smtc: this.smtc.status(),
       paths: { config: this.store.getConfig() ? 'ready' : 'unavailable' },
