@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
-import { requestDaemonResilient } from '../ipc/client.js'
+import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -120,18 +120,58 @@ export const NowPlaying = () => {
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
   const qrTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const controlBusy = useRef(false)
+  const statusRef = useRef<PlaybackStatus>(emptyStatus)
+  const seekTarget = useRef<number | null>(null)
+  const seekTimer = useRef<NodeJS.Timeout | undefined>(undefined)
+  const seekInFlight = useRef(false)
+
+  const updateStatus = (nextStatus: PlaybackStatus) => {
+    statusRef.current = nextStatus
+    setStatus(nextStatus)
+  }
 
   const runControl = (method: string, params?: Record<string, unknown>) => {
     if (controlBusy.current) return
     controlBusy.current = true
     void callDaemon<PlaybackStatus>(method, params)
       .then((result) => {
-        if (result?.daemon === 'running') setStatus(result)
+        if (result?.daemon === 'running') updateStatus(result)
       })
       .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
       .finally(() => {
         controlBusy.current = false
       })
+  }
+
+  const commitSeek = async () => {
+    if (seekInFlight.current || seekTarget.current === null) return
+    const target = seekTarget.current
+    seekTarget.current = null
+    seekInFlight.current = true
+    try {
+      const result = await callDaemon<PlaybackStatus>('seek', { value: target, relative: false })
+      updateStatus(result)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      seekInFlight.current = false
+      if (seekTarget.current !== null) {
+        if (seekTimer.current) clearTimeout(seekTimer.current)
+        seekTimer.current = setTimeout(() => void commitSeek(), 80)
+      }
+    }
+  }
+
+  const previewSeek = (delta: number) => {
+    const current = statusRef.current
+    if (!current.song || current.duration <= 0) return
+    const base = seekTarget.current ?? current.position
+    const target = Math.max(0, Math.min(current.duration, base + delta))
+    seekTarget.current = target
+    updateStatus({ ...current, position: target })
+    setMessage(`跳转到 ${formatTime(target)}`)
+    if (seekTimer.current) clearTimeout(seekTimer.current)
+    seekTimer.current = setTimeout(() => void commitSeek(), 220)
   }
 
   const refreshQueue = async () => {
@@ -161,27 +201,42 @@ export const NowPlaying = () => {
     void verifyAccount()
     void refreshQueue()
     const queueTimer = setInterval(() => void refreshQueue(), 2000)
-    let polling = false
-    const playerTimer = setInterval(() => {
-      if (polling) return
-      polling = true
-      void Promise.all([
-        callDaemon<PlaybackStatus>('status'),
-        callDaemon<SpectrumFrame>('spectrum'),
-      ])
-        .then(([nextStatus, nextSpectrum]) => {
-          setStatus(nextStatus)
-          setSpectrum(nextSpectrum)
-        })
-        .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
-        .finally(() => {
-          polling = false
-        })
-    }, 120)
+    let disposed = false
+    let unsubscribe: (() => void) | undefined
+    let reconnectTimer: NodeJS.Timeout | undefined
+    const connectSubscription = async () => {
+      if (disposed) return
+      try {
+        unsubscribe = await subscribeDaemon(
+          (event) => {
+            if (event.event === 'status') {
+              const incoming = event.data as PlaybackStatus
+              if (seekInFlight.current || seekTarget.current !== null) {
+                const position = seekTarget.current ?? statusRef.current.position
+                updateStatus({ ...incoming, position })
+              } else {
+                updateStatus(incoming)
+              }
+            }
+            if (event.event === 'spectrum') setSpectrum(event.data as SpectrumFrame)
+          },
+          () => {
+            if (!disposed) reconnectTimer = setTimeout(() => void connectSubscription(), 500)
+          },
+        )
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : String(error))
+        if (!disposed) reconnectTimer = setTimeout(() => void connectSubscription(), 1000)
+      }
+    }
+    void connectSubscription()
     return () => {
+      disposed = true
       process.stdout.off('resize', resize)
       clearInterval(queueTimer)
-      clearInterval(playerTimer)
+      unsubscribe?.()
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (seekTimer.current) clearTimeout(seekTimer.current)
       if (qrTimer.current) clearInterval(qrTimer.current)
     }
   }, [])
@@ -666,8 +721,8 @@ export const NowPlaying = () => {
     if (input === ' ') runControl('toggle')
     if (input === 'n') runControl('next')
     if (input === 'p') runControl('previous')
-    if (key.leftArrow) runControl('seek', { value: -5, relative: true })
-    if (key.rightArrow) runControl('seek', { value: 5, relative: true })
+    if (key.leftArrow) previewSeek(-5)
+    if (key.rightArrow) previewSeek(5)
     if (key.upArrow) runControl('volume', { value: Math.min(100, status.volume + 5) })
     if (key.downArrow) runControl('volume', { value: Math.max(0, status.volume - 5) })
   })

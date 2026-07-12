@@ -65,6 +65,7 @@ export const normalizePlaylist = (raw: any): PlaylistSummary => ({
       }
     : undefined,
   subscribed: Boolean(raw?.subscribed),
+  specialType: Number(raw?.specialType || 0),
 })
 
 export class NeteaseApi {
@@ -300,6 +301,29 @@ export class NeteaseApi {
   async dailyPlaylists() {
     const result = await this.call<any>('recommend_resource', { timestamp: Date.now() })
     return (result?.recommend || []).map(normalizePlaylist)
+  }
+
+  async heartMode(seedId: number) {
+    const playlists = await this.userPlaylists()
+    const likedPlaylist =
+      playlists.find((playlist) => playlist.specialType === 5) ||
+      playlists.find((playlist) => playlist.name === '我喜欢的音乐')
+    if (!likedPlaylist) {
+      throw new AppError('LIKED_PLAYLIST_NOT_FOUND', '没有找到账号的“我喜欢的音乐”歌单')
+    }
+    const result = await this.call<any>('playmode_intelligence_list', {
+      id: seedId,
+      pid: likedPlaylist.id,
+      sid: seedId,
+      count: 1,
+      timestamp: Date.now(),
+    })
+    const songs = (result?.data || [])
+      .map((item: any) => item?.songInfo || item?.song || item)
+      .filter((item: any) => item?.id)
+      .map(normalizeSong)
+    if (!songs.length) throw new AppError('HEART_MODE_EMPTY', '心动模式没有返回可播放歌曲')
+    return { seedId, playlist: likedPlaylist, songs }
   }
 
   async personalFm() {

@@ -6,6 +6,7 @@ export type QueueContextType =
   | 'playlist'
   | 'daily'
   | 'fm'
+  | 'heart'
   | 'liked'
   | 'history'
   | 'cloud'
@@ -73,6 +74,7 @@ export interface PlaylistSummary {
   description?: string
   creator?: { id?: number; name: string }
   subscribed?: boolean
+  specialType?: number
 }
 
 export interface QueueContext {

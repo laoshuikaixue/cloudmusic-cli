@@ -247,21 +247,27 @@ export class PlayerDaemon {
       0,
       Math.min(duration || Infinity, relative ? current + target : target),
     )
-    if (!this.currentUrl || Date.now() - this.sourceResolvedAt > 8 * 60 * 1000) {
+    const sourceExpired = !this.currentUrl || Date.now() - this.sourceResolvedAt > 8 * 60 * 1000
+    if (sourceExpired) {
       this.source = await this.api.resolveSource(song.id, this.config)
       this.currentUrl = this.source.url
       this.sourceResolvedAt = Date.now()
     }
     const wasPaused = this.state === 'paused'
-    this.state = 'loading'
-    await this.pipeline.start(this.currentUrl, {
-      mpvPath: this.config.binaries.mpv || 'mpv',
-      ffmpegPath: this.config.binaries.ffmpeg || 'ffmpeg',
-      volume: this.config.volume,
-      offset: position,
-    })
-    this.state = 'playing'
-    if (wasPaused) await this.pause()
+    if (sourceExpired) {
+      this.state = 'loading'
+      await this.pipeline.start(this.currentUrl, {
+        mpvPath: this.config.binaries.mpv || 'mpv',
+        ffmpegPath: this.config.binaries.ffmpeg || 'ffmpeg',
+        volume: this.config.volume,
+        offset: position,
+      })
+      this.state = 'playing'
+      if (wasPaused) await this.pause()
+    } else {
+      await this.pipeline.seek(position)
+      this.state = wasPaused ? 'paused' : 'playing'
+    }
     return this.status()
   }
 
@@ -351,6 +357,19 @@ export class PlayerDaemon {
   async playFm() {
     const songs = await this.api.personalFm()
     return this.replaceQueue(songs, 0, { type: 'fm', name: '私人 FM' })
+  }
+
+  async playHeartMode(seedId?: number) {
+    const likedIds = [...this.likedSongIds]
+    const seed =
+      seedId || this.song?.id || likedIds[Math.floor(Math.random() * Math.max(1, likedIds.length))]
+    if (!seed) throw new AppError('HEART_MODE_NO_SEED', '心动模式需要当前歌曲或喜欢歌曲作为种子')
+    const result = await this.api.heartMode(seed)
+    return this.replaceQueue(result.songs, 0, {
+      type: 'heart',
+      id: result.playlist.id,
+      name: '心动模式',
+    })
   }
 
   async trashCurrentFmSong() {
@@ -501,6 +520,7 @@ export class PlayerDaemon {
       'library.daily.play',
       'library.fm.play',
       'library.fm.trash',
+      'library.heart.play',
       'library.history.play',
       'library.history.clear',
       'library.history.remove',
@@ -674,6 +694,20 @@ export class PlayerDaemon {
         return this.playFm()
       case 'library.fm.trash':
         return this.trashCurrentFmSong()
+      case 'library.heart': {
+        const seed = params.id === undefined ? this.song?.id : numberParam(params.id, 'id')
+        const likedIds = [...this.likedSongIds]
+        const fallback = likedIds[Math.floor(Math.random() * Math.max(1, likedIds.length))]
+        const resolvedSeed = seed || fallback
+        if (!resolvedSeed) {
+          throw new AppError('HEART_MODE_NO_SEED', '心动模式需要当前歌曲或喜欢歌曲作为种子')
+        }
+        return this.api.heartMode(resolvedSeed)
+      }
+      case 'library.heart.play':
+        return this.playHeartMode(
+          params.id === undefined ? undefined : numberParam(params.id, 'id'),
+        )
       case 'library.liked.ids':
         return this.refreshLikedSongs()
       case 'library.history':

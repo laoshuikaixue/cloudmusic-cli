@@ -136,11 +136,15 @@ export const requestDaemonResilient = async <T = unknown>(
   }
 }
 
-export const subscribeDaemon = async (onEvent: (event: RpcEvent) => void) => {
+export const subscribeDaemon = async (
+  onEvent: (event: RpcEvent) => void,
+  onDisconnect?: () => void,
+) => {
   await ensureDaemon()
   const socket: Socket = createConnection(paths.daemonSocket)
   let buffer = ''
   const id = randomUUID()
+  let connected = false
   socket.setEncoding('utf8')
   socket.on('data', (chunk) => {
     buffer += chunk
@@ -157,9 +161,15 @@ export const subscribeDaemon = async (onEvent: (event: RpcEvent) => void) => {
   await new Promise<void>((resolve, reject) => {
     socket.once('error', reject)
     socket.once('connect', () => {
+      connected = true
+      socket.removeListener('error', reject)
+      socket.on('error', () => undefined)
       socket.write(`${JSON.stringify({ id, method: 'subscribe' })}\n`)
       resolve()
     })
+  })
+  socket.once('close', () => {
+    if (connected) onDisconnect?.()
   })
   return () => socket.destroy()
 }

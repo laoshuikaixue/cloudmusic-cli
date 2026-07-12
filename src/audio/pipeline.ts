@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { unlink } from 'node:fs/promises'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createMpvSocketPath } from '../core/paths.js'
 import { AppError } from '../core/errors.js'
 import type { SpectrumFrame } from '../core/types.js'
@@ -15,7 +15,7 @@ export interface PipelineOptions {
 }
 
 export class AudioPipeline extends EventEmitter {
-  private mpv?: ChildProcessWithoutNullStreams
+  private mpv?: ChildProcess
   private ffmpeg?: ChildProcessWithoutNullStreams
   private ipc?: MpvIpc
   private analyzer?: SpectrumAnalyzer
@@ -25,6 +25,8 @@ export class AudioPipeline extends EventEmitter {
   private position = 0
   private offset = 0
   private ffmpegError = ''
+  private currentUrl = ''
+  private currentOptions?: PipelineOptions
   private transition: Promise<void> = Promise.resolve()
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
@@ -46,6 +48,8 @@ export class AudioPipeline extends EventEmitter {
     this.offset = options.offset || 0
     this.position = this.offset
     this.ffmpegError = ''
+    this.currentUrl = url
+    this.currentOptions = options
     this.socketPath = createMpvSocketPath()
     if (process.platform !== 'win32') await unlink(this.socketPath).catch(() => undefined)
 
@@ -54,19 +58,17 @@ export class AudioPipeline extends EventEmitter {
       '--really-quiet',
       '--input-terminal=no',
       `--input-ipc-server=${this.socketPath}`,
-      '--demuxer=rawaudio',
-      '--demuxer-rawaudio-format=s16le',
-      '--demuxer-rawaudio-rate=48000',
-      '--demuxer-rawaudio-channels=stereo',
+      '--audio-buffer=0.05',
       `--volume=${options.volume}`,
-      '-',
+      ...(this.offset > 0 ? [`--start=${this.offset}`] : []),
+      url,
     ]
 
     const mpvPath =
       process.platform === 'win32' && options.mpvPath === 'mpv' ? 'mpv.exe' : options.mpvPath
     try {
       this.mpv = spawn(mpvPath, mpvArgs, {
-        stdio: ['pipe', 'pipe', 'pipe'],
+        stdio: 'ignore',
         windowsHide: true,
       })
     } catch (error) {
@@ -78,13 +80,37 @@ export class AudioPipeline extends EventEmitter {
     this.ipc = new MpvIpc(this.socketPath)
     await Promise.race([this.ipc.connect(), mpvStartup])
 
-    this.analyzer = new SpectrumAnalyzer(this.offset)
+    await this.startAnalyzer(url, options.ffmpegPath, this.offset)
+
+    this.mpv.once('close', () => {
+      if (!this.stopping) this.emit('ended')
+    })
+
+    this.pollTimer = setInterval(async () => {
+      try {
+        const value = await this.ipc?.command<number>('get_property', 'time-pos')
+        if (typeof value === 'number' && Number.isFinite(value)) this.position = value
+      } catch {
+        // 切歌或关闭期间允许短暂读取失败。
+      }
+    }, 100)
+  }
+
+  private async startAnalyzer(url: string, ffmpegPath: string, offset: number) {
+    this.ffmpeg?.stdout.removeAllListeners()
+    this.ffmpeg?.removeAllListeners()
+    this.ffmpeg?.kill()
+    await this.analyzer?.destroy().catch(() => undefined)
+    this.ffmpeg = undefined
+    this.analyzer = new SpectrumAnalyzer(offset)
+    this.ffmpegError = ''
     const ffmpegArgs = [
       '-nostdin',
       '-hide_banner',
       '-loglevel',
       'error',
-      ...(this.offset > 0 ? ['-ss', String(this.offset)] : []),
+      ...(offset > 0 ? ['-ss', String(offset)] : []),
+      '-re',
       '-i',
       url,
       '-vn',
@@ -99,7 +125,7 @@ export class AudioPipeline extends EventEmitter {
       'pipe:1',
     ]
     try {
-      this.ffmpeg = spawn(options.ffmpegPath, ffmpegArgs, {
+      this.ffmpeg = spawn(ffmpegPath, ffmpegArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -113,45 +139,46 @@ export class AudioPipeline extends EventEmitter {
     })
     this.ffmpeg.stdout.on('data', (chunk: Buffer) => {
       this.analyzer?.push(chunk)
-      if (this.mpv && !this.mpv.stdin.destroyed && !this.mpv.stdin.write(chunk)) {
-        this.ffmpeg?.stdout.pause()
-        this.mpv.stdin.once('drain', () => this.ffmpeg?.stdout.resume())
-      }
     })
-    this.ffmpeg.once('error', (error) => this.emit('error', error))
+    this.ffmpeg.once('error', (error) => {
+      if (!this.stopping) this.ffmpegError = error.message
+    })
     this.ffmpeg.once('close', (code) => {
-      this.mpv?.stdin.end()
       if (!this.stopping && code && code !== 0) {
-        this.emit(
-          'error',
-          new AppError('FFMPEG_FAILED', this.ffmpegError || `FFmpeg 退出：${code}`),
-        )
+        this.ffmpegError ||= `FFmpeg 频谱分析进程退出：${code}`
       }
     })
-    this.mpv.once('close', () => {
-      if (!this.stopping) this.emit('ended')
-    })
-
-    this.pollTimer = setInterval(async () => {
-      try {
-        const value = await this.ipc?.command<number>('get_property', 'time-pos')
-        if (typeof value === 'number' && Number.isFinite(value)) this.position = this.offset + value
-      } catch {
-        // 切歌或关闭期间允许短暂读取失败。
-      }
-    }, 100)
   }
 
   async pause() {
     await this.ipc?.command('set_property', 'pause', true)
+    this.ffmpeg?.stdout.removeAllListeners()
+    this.ffmpeg?.removeAllListeners()
+    this.ffmpeg?.kill()
+    this.ffmpeg = undefined
   }
 
   async resume() {
+    if (this.currentUrl && this.currentOptions) {
+      await this.startAnalyzer(this.currentUrl, this.currentOptions.ffmpegPath, this.position)
+    }
     await this.ipc?.command('set_property', 'pause', false)
   }
 
   async setVolume(volume: number) {
     await this.ipc?.command('set_property', 'volume', volume)
+  }
+
+  seek(position: number) {
+    return this.enqueue(async () => {
+      if (!this.ipc || !this.currentUrl || !this.currentOptions) {
+        throw new AppError('NOT_PLAYING', '当前没有可 Seek 的音频管线')
+      }
+      await this.ipc.command('seek', position, 'absolute+exact')
+      this.position = position
+      this.offset = position
+      await this.startAnalyzer(this.currentUrl, this.currentOptions.ffmpegPath, position)
+    })
   }
 
   getPosition() {
@@ -182,7 +209,6 @@ export class AudioPipeline extends EventEmitter {
     this.mpv?.removeAllListeners('close')
     this.mpv?.removeAllListeners('error')
     this.ffmpeg?.kill()
-    this.mpv?.stdin.end()
     this.mpv?.kill()
     this.ipc?.close()
     await this.analyzer?.destroy().catch(() => undefined)
@@ -194,5 +220,7 @@ export class AudioPipeline extends EventEmitter {
     this.ipc = undefined
     this.analyzer = undefined
     this.socketPath = undefined
+    this.currentUrl = ''
+    this.currentOptions = undefined
   }
 }

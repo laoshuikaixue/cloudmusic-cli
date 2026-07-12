@@ -290,6 +290,17 @@ library
   )
 library.command('fm-trash').action(async () => output(await withDaemon('library.fm.trash')))
 library
+  .command('heart [seed]')
+  .description('获取或播放心动模式智能推荐队列')
+  .option('--play', '进入心动模式并播放')
+  .action(async (seed, options) =>
+    output(
+      await withDaemon(options.play ? 'library.heart.play' : 'library.heart', {
+        ...(seed === undefined ? {} : { id: Number(seed) }),
+      }),
+    ),
+  )
+library
   .command('history')
   .option('--play', '播放最近播放列表')
   .option('--index <index>', '从指定索引开始播放', '0')
