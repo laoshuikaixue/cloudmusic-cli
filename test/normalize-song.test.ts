@@ -39,6 +39,8 @@ describe('normalizePlaylist', () => {
       description: undefined,
       creator: { id: 5035092974, name: 'LaoShui_' },
       subscribed: false,
+      specialType: 0,
+      updateFrequency: undefined,
     })
   })
 })

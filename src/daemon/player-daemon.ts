@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { AudioPipeline } from '../audio/pipeline.js'
 import { NeteaseApi } from '../api/netease.js'
 import { AppError } from '../core/errors.js'
@@ -955,25 +955,36 @@ export class PlayerDaemon {
   }
 
   private async doctor() {
-    const inspect = (command: string, versionArgument: string) => {
-      const result = spawnSync(command, [versionArgument], { encoding: 'utf8', timeout: 5000 })
-      return {
-        command,
-        ok: !result.error && result.status === 0,
-        version: `${result.stdout || result.stderr || ''}`.split(/\r?\n/)[0],
-        error: result.error?.message,
-      }
-    }
+    const inspect = (command: string, versionArgument: string) =>
+      new Promise<{ command: string; ok: boolean; version: string; error?: string }>((resolve) => {
+        execFile(
+          command,
+          [versionArgument],
+          { encoding: 'utf8', timeout: 3000, windowsHide: true },
+          (error, stdout, stderr) => {
+            resolve({
+              command,
+              ok: !error,
+              version: `${stdout || stderr || ''}`.split(/\r?\n/)[0] || '',
+              error: error?.message,
+            })
+          },
+        )
+      })
     let apiStatus: { ok: boolean; error?: string } = { ok: true }
     try {
       await this.api.initialize()
     } catch (error) {
       apiStatus = { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+    const [mpv, ffmpeg] = await Promise.all([
+      inspect(this.config.binaries.mpv || 'mpv', '--version'),
+      inspect(this.config.binaries.ffmpeg || 'ffmpeg', '-version'),
+    ])
     return {
       node: { ok: Number(process.versions.node.split('.')[0]) >= 20, version: process.version },
-      mpv: inspect(this.config.binaries.mpv || 'mpv', '--version'),
-      ffmpeg: inspect(this.config.binaries.ffmpeg || 'ffmpeg', '-version'),
+      mpv,
+      ffmpeg,
       api: apiStatus,
       smtc: this.smtc.status(),
       paths: { config: this.store.getConfig() ? 'ready' : 'unavailable' },

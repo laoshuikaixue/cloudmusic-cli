@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
+import { normalizeControlInput } from './controls.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -945,6 +946,8 @@ export const NowPlaying = () => {
   }
 
   useInput((input, key) => {
+    const controlInput = normalizeControlInput(input)
+
     if (mode === 'playlist-edit') {
       if (key.escape) {
         setInputValue('')
@@ -997,13 +1000,13 @@ export const NowPlaying = () => {
         return setSelectedIndex((index) => Math.min(searchResults.length - 1, index + 1))
       }
       if (key.return && searchResults[selectedIndex]) void playSearchResult(selectedIndex)
-      if (input === 'n' && searchResults[selectedIndex]) {
+      if (controlInput === 'n' && searchResults[selectedIndex]) {
         void enqueueSong(searchResults[selectedIndex], true)
       }
-      if (input === 'e' && searchResults[selectedIndex]) {
+      if (controlInput === 'e' && searchResults[selectedIndex]) {
         void enqueueSong(searchResults[selectedIndex], false)
       }
-      if (input === 's' && searchResults[selectedIndex]) {
+      if (controlInput === 's' && searchResults[selectedIndex]) {
         void openPlaylistPicker(searchResults[selectedIndex], 'results')
       }
       return
@@ -1022,7 +1025,7 @@ export const NowPlaying = () => {
       if (key.return && searchPlaylists[selectedIndex]) {
         void openPlaylist(searchPlaylists[selectedIndex], 'search-playlists')
       }
-      if (input === 'f' && searchPlaylists[selectedIndex]) {
+      if (controlInput === 'f' && searchPlaylists[selectedIndex]) {
         void togglePlaylistSubscription(searchPlaylists[selectedIndex])
       }
       return
@@ -1058,7 +1061,7 @@ export const NowPlaying = () => {
           })
           .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
       }
-      if (input === 'x' && queue.songs[queueIndex]) {
+      if (controlInput === 'x' && queue.songs[queueIndex]) {
         const removed = queue.songs[queueIndex]
         void callDaemon<QueueSnapshot>('queue.remove', { index: queueIndex })
           .then((result) => {
@@ -1096,7 +1099,7 @@ export const NowPlaying = () => {
     }
 
     if (mode === 'library') {
-      if (key.escape || input === 'l') return setMode('normal')
+      if (key.escape || controlInput === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
       if (key.downArrow) return setLibraryIndex((index) => Math.min(13, index + 1))
       if (key.return) {
@@ -1158,10 +1161,10 @@ export const NowPlaying = () => {
         if (playlistPageKind === 'toplist') void openToplist(playlists[libraryIndex])
         else void openPlaylist(playlists[libraryIndex])
       }
-      if (input === 'f' && playlistPageKind !== 'toplist' && playlists[libraryIndex]) {
+      if (controlInput === 'f' && playlistPageKind !== 'toplist' && playlists[libraryIndex]) {
         void togglePlaylistSubscription(playlists[libraryIndex])
       }
-      if (input === 'c' && playlistPageKind === 'library') {
+      if (controlInput === 'c' && playlistPageKind === 'library') {
         setPlaylistEditAction('create')
         setPlaylistEditTarget(null)
         setInputValue('')
@@ -1209,25 +1212,25 @@ export const NowPlaying = () => {
       if (key.downArrow)
         return setLibraryIndex((index) => Math.min(librarySongs.length - 1, index + 1))
       if (key.return && librarySongs[libraryIndex]) void playLibrary(libraryIndex)
-      if (input === 'a' && librarySongs.length) void playLibrary(0)
-      if (input === 'n' && librarySongs[libraryIndex]) {
+      if (controlInput === 'a' && librarySongs.length) void playLibrary(0)
+      if (controlInput === 'n' && librarySongs[libraryIndex]) {
         void enqueueSong(librarySongs[libraryIndex], true)
       }
-      if (input === 'e' && librarySongs[libraryIndex]) {
+      if (controlInput === 'e' && librarySongs[libraryIndex]) {
         void enqueueSong(librarySongs[libraryIndex], false)
       }
-      if (input === 's' && librarySongs[libraryIndex]) {
+      if (controlInput === 's' && librarySongs[libraryIndex]) {
         void openPlaylistPicker(librarySongs[libraryIndex], 'tracks')
       }
       if (
-        input === 'x' &&
+        controlInput === 'x' &&
         librarySongs[libraryIndex] &&
         librarySource?.type === 'playlist' &&
         librarySource.owned
       ) {
         void removeTrackFromOwnedPlaylist(librarySongs[libraryIndex])
       }
-      if (input === 'r' && librarySource?.type === 'playlist') {
+      if (controlInput === 'r' && librarySource?.type === 'playlist') {
         void showComments(
           'comments.playlist',
           { id: librarySource.id },
@@ -1248,7 +1251,7 @@ export const NowPlaying = () => {
     }
 
     if (mode === 'settings') {
-      if (key.escape || input === 'o' || input === ',') return setMode('normal')
+      if (key.escape || controlInput === 'o' || input === ',') return setMode('normal')
       if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
       if (key.downArrow) return setSettingsIndex((index) => Math.min(6, index + 1))
       if (settingsIndex === 6 && (key.rightArrow || key.return || input === ' ')) {
@@ -1292,20 +1295,20 @@ export const NowPlaying = () => {
       return
     }
 
-    if (input === 'q' || key.escape) return exit()
+    if (controlInput === 'q' || key.escape) return exit()
     if (input === '/') {
       setInputValue('')
       return setMode('search')
     }
-    if (input === 'l') {
+    if (controlInput === 'l') {
       setLibraryIndex(0)
       return setMode('library')
     }
-    if (input === 'o' || input === ',') return void openSettings()
-    if (input === 's' && status.song) {
+    if (controlInput === 'o' || input === ',') return void openSettings()
+    if (controlInput === 's' && status.song) {
       return void openPlaylistPicker(status.song, 'normal')
     }
-    if (input === 'r' && status.song) {
+    if (controlInput === 'r' && status.song) {
       return void showComments(
         'comments.song',
         { id: status.song.id },
@@ -1314,23 +1317,23 @@ export const NowPlaying = () => {
       )
     }
     if (key.tab) return setMode('queue')
-    if (input === 'f' && status.song) {
+    if (controlInput === 'f' && status.song) {
       runControl('like', { id: status.song.id, liked: !status.liked })
       setMessage(status.liked ? '已取消喜欢' : '已加入喜欢')
     }
-    if (input === 'm') {
+    if (controlInput === 'm') {
       const modes: PlaybackMode[] = ['sequence', 'repeat-one', 'shuffle']
       const nextMode = modes[(modes.indexOf(status.mode) + 1) % modes.length]
       runControl('mode.set', { mode: nextMode })
       setMessage(`播放模式：${nextMode}`)
     }
-    if (input === 'd' && status.queueContext?.type === 'fm') {
+    if (controlInput === 'd' && status.queueContext?.type === 'fm') {
       runControl('library.fm.trash')
       setMessage('已移入 FM 垃圾桶并播放下一首')
     }
     if (input === ' ') runControl('toggle')
-    if (input === 'n') runControl('next')
-    if (input === 'p') runControl('previous')
+    if (controlInput === 'n') runControl('next')
+    if (controlInput === 'p') runControl('previous')
     if (key.leftArrow) previewSeek(-5)
     if (key.rightArrow) previewSeek(5)
     if (key.upArrow) runControl('volume', { value: Math.min(100, status.volume + 5) })

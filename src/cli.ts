@@ -1,12 +1,6 @@
 #!/usr/bin/env node
-import React from 'react'
 import { Command } from 'commander'
-import { render } from 'ink'
-import qrcode from 'qrcode-terminal'
-import { runDaemonServer } from './ipc/server.js'
 import { ensureDaemon, requestDaemon, subscribeDaemon } from './ipc/client.js'
-import { runMcpServer } from './mcp/server.js'
-import { NowPlaying } from './tui/now-playing.js'
 import { toAppError } from './core/errors.js'
 import type {
   CommentPage,
@@ -21,6 +15,7 @@ import type {
 const VERSION = '0.1.0'
 
 if (process.argv[2] === '__daemon') {
+  const { runDaemonServer } = await import('./ipc/server.js')
   await runDaemonServer()
   await new Promise(() => undefined)
 }
@@ -261,6 +256,7 @@ login
   .description('二维码登录')
   .action(async () => {
     if (program.opts().json) throw new Error('二维码登录需要交互式终端，请移除 --json')
+    const qrcode = (await import('qrcode-terminal')).default
     const start = await withDaemon<{ key: string; url: string }>('login.qr.start')
     qrcode.generate(start.url, { small: true }, (code) => console.log(code))
     console.log('请使用网易云音乐 App 扫码确认登录。')
@@ -620,12 +616,23 @@ daemon.command('restart').action(async () => {
   output(await ensureDaemon())
 })
 
-program.command('mcp').description('启动 stdio MCP Server').action(runMcpServer)
+program
+  .command('mcp')
+  .description('启动 stdio MCP Server')
+  .action(async () => {
+    const { runMcpServer } = await import('./mcp/server.js')
+    await runMcpServer()
+  })
 
 const main = async () => {
   if (process.argv.length === 2) {
     await ensureDaemon()
     if (!process.stdout.isTTY) return output(await requestDaemon<PlaybackStatus>('status'))
+    const [{ default: React }, { render }, { NowPlaying }] = await Promise.all([
+      import('react'),
+      import('ink'),
+      import('./tui/now-playing.js'),
+    ])
     process.stdout.write('\u001b[?1049h\u001b[2J\u001b[3J\u001b[H\u001b[?25l')
     try {
       const app = render(React.createElement(NowPlaying), { exitOnCtrlC: true })
