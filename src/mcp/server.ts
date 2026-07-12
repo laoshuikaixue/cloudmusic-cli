@@ -15,6 +15,20 @@ const tools = [
     },
   },
   {
+    name: 'search_resources',
+    description: '搜索网易云歌单、专辑或歌手。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        keywords: { type: 'string' },
+        type: { type: 'string', enum: ['playlist', 'album', 'artist'] },
+        limit: { type: 'number', default: 10 },
+        offset: { type: 'number', default: 0 },
+      },
+      required: ['keywords', 'type'],
+    },
+  },
+  {
     name: 'play_song',
     description: '播放指定网易云歌曲 ID。',
     inputSchema: {
@@ -46,13 +60,18 @@ const tools = [
   },
   {
     name: 'manage_queue',
-    description: '查看、添加、移除或清空播放队列。',
+    description: '查看、播放、添加、设为下一首、移动、移除或清空播放队列。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'add', 'remove', 'clear'] },
+        action: {
+          type: 'string',
+          enum: ['list', 'play', 'add', 'next', 'move', 'remove', 'clear'],
+        },
         id: { type: 'number' },
         index: { type: 'number' },
+        from: { type: 'number' },
+        to: { type: 'number' },
       },
       required: ['action'],
     },
@@ -87,6 +106,50 @@ const tools = [
     },
   },
   {
+    name: 'subscribe_playlist',
+    description: '收藏或取消收藏指定网易云歌单。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        subscribed: { type: 'boolean', default: true },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'manage_playlist',
+    description: '创建、重命名、删除自建歌单，或添加和移除歌单歌曲。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['create', 'rename', 'delete', 'add_tracks', 'remove_tracks'],
+        },
+        id: { type: 'number' },
+        name: { type: 'string' },
+        private: { type: 'boolean', default: false },
+        trackIds: { type: 'array', items: { type: 'number' } },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'get_comments',
+    description: '获取网易云歌曲或歌单评论。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['song', 'playlist'], default: 'song' },
+        id: { type: 'number' },
+        limit: { type: 'number', default: 20 },
+        offset: { type: 'number', default: 0 },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'play_playlist',
     description: '用完整歌单替换当前队列，并从指定索引开始播放。',
     inputSchema: {
@@ -110,6 +173,17 @@ const tools = [
       type: 'object',
       properties: { action: { type: 'string', enum: ['get', 'play', 'trash'] } },
       required: ['action'],
+    },
+  },
+  {
+    name: 'heart_mode',
+    description: '根据当前歌曲或指定种子歌曲生成网易云心动模式智能队列，并可立即播放。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: '可选的种子歌曲 ID' },
+        play: { type: 'boolean', default: true },
+      },
     },
   },
   {
@@ -237,6 +311,15 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
   switch (name) {
     case 'search_songs':
       return request('search', args)
+    case 'search_resources':
+      return request(
+        args.type === 'playlist'
+          ? 'search.playlists'
+          : args.type === 'album'
+            ? 'search.albums'
+            : 'search.artists',
+        args,
+      )
     case 'play_song':
       return request('play', args)
     case 'get_player_status':
@@ -261,6 +344,20 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.daily')
     case 'get_playlist_tracks':
       return request('library.playlist', args)
+    case 'subscribe_playlist':
+      return request('library.playlist.subscribe', args)
+    case 'manage_playlist': {
+      const action = String(args.action)
+      if (action === 'create') return request('library.playlist.create', args)
+      if (action === 'rename') return request('library.playlist.rename', args)
+      if (action === 'delete') return request('library.playlist.delete', args)
+      return request('library.playlist.tracks', {
+        ...args,
+        operation: action === 'remove_tracks' ? 'del' : 'add',
+      })
+    }
+    case 'get_comments':
+      return request(args.type === 'playlist' ? 'comments.playlist' : 'comments.song', args)
     case 'play_playlist':
       return request('library.playlist.play', args)
     case 'play_daily_recommendations':
@@ -275,6 +372,8 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
             : 'library.fm',
       )
     }
+    case 'heart_mode':
+      return request(args.play === false ? 'library.heart' : 'library.heart.play', args)
     case 'get_play_history':
       return request('library.history')
     case 'play_history':

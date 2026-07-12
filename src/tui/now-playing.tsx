@@ -6,8 +6,10 @@ import type {
   AppConfig,
   CloudLibrary,
   CollectionSummary,
+  CommentPage,
   HistoryEntry,
   ListeningRecordEntry,
+  MusicComment,
   PlaybackMode,
   PlaybackStatus,
   PlaylistSummary,
@@ -20,24 +22,39 @@ type PageMode =
   | 'normal'
   | 'search'
   | 'results'
+  | 'search-playlists'
+  | 'search-collections'
   | 'cookie'
   | 'qr'
   | 'queue'
   | 'library'
   | 'playlists'
+  | 'playlist-edit'
+  | 'playlist-picker'
   | 'tracks'
   | 'settings'
   | 'account'
+  | 'comments'
   | 'collections'
 
 type LibrarySource =
-  | { type: 'playlist'; id: number; name: string }
+  | { type: 'playlist'; id: number; name: string; owned: boolean }
   | { type: 'daily'; name: string }
   | { type: 'history'; name: string }
   | { type: 'cloud'; name: string }
   | { type: 'album'; id: number; name: string }
   | { type: 'artist'; id: number; name: string }
   | { type: 'record'; range: 'week' | 'all'; name: string }
+
+type SearchType = 'song' | 'playlist' | 'album' | 'artist'
+
+const searchTypes: SearchType[] = ['song', 'playlist', 'album', 'artist']
+const searchTypeLabels: Record<SearchType, string> = {
+  song: '歌曲',
+  playlist: '歌单',
+  album: '专辑',
+  artist: '歌手',
+}
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
   return requestDaemonResilient<T>(method, params)
@@ -104,21 +121,38 @@ export const NowPlaying = () => {
   const [mode, setMode] = useState<PageMode>('normal')
   const [inputValue, setInputValue] = useState('')
   const [searchResults, setSearchResults] = useState<Song[]>([])
+  const [searchType, setSearchType] = useState<SearchType>('song')
+  const [searchPlaylists, setSearchPlaylists] = useState<PlaylistSummary[]>([])
+  const [searchCollections, setSearchCollections] = useState<CollectionSummary[]>([])
+  const [searchCollectionType, setSearchCollectionType] = useState<'album' | 'artist'>('album')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queueIndex, setQueueIndex] = useState(0)
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
+  const [playlistPageTitle, setPlaylistPageTitle] = useState('我的歌单')
+  const [playlistEditAction, setPlaylistEditAction] = useState<'create' | 'rename'>('create')
+  const [playlistEditTarget, setPlaylistEditTarget] = useState<PlaylistSummary | null>(null)
+  const [playlistPickerSong, setPlaylistPickerSong] = useState<Song | null>(null)
+  const [playlistPickerReturnMode, setPlaylistPickerReturnMode] = useState<PageMode>('normal')
+  const [deleteArmedId, setDeleteArmedId] = useState<number | null>(null)
   const [collections, setCollections] = useState<CollectionSummary[]>([])
   const [collectionType, setCollectionType] = useState<'album' | 'artist'>('album')
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [libraryIndex, setLibraryIndex] = useState(0)
   const [librarySource, setLibrarySource] = useState<LibrarySource | null>(null)
+  const [trackReturnMode, setTrackReturnMode] = useState<PageMode>('library')
   const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(null)
   const [settingsIndex, setSettingsIndex] = useState(0)
   const [accountIndex, setAccountIndex] = useState(0)
   const [qrText, setQrText] = useState('')
+  const [comments, setComments] = useState<MusicComment[]>([])
+  const [commentIndex, setCommentIndex] = useState(0)
+  const [commentTitle, setCommentTitle] = useState('歌曲评论')
+  const [commentTotal, setCommentTotal] = useState(0)
+  const [commentReturnMode, setCommentReturnMode] = useState<PageMode>('normal')
   const [message, setMessage] = useState('按 / 搜索歌曲，按 o 打开设置')
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
   const qrTimer = useRef<NodeJS.Timeout | undefined>(undefined)
+  const deleteTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const controlBusy = useRef(false)
   const statusRef = useRef<PlaybackStatus>(emptyStatus)
   const seekTarget = useRef<number | null>(null)
@@ -238,6 +272,7 @@ export const NowPlaying = () => {
       if (reconnectTimer) clearTimeout(reconnectTimer)
       if (seekTimer.current) clearTimeout(seekTimer.current)
       if (qrTimer.current) clearInterval(qrTimer.current)
+      if (deleteTimer.current) clearTimeout(deleteTimer.current)
     }
   }, [])
 
@@ -246,11 +281,34 @@ export const NowPlaying = () => {
     if (!keywords) return
     setMessage(`正在搜索：${keywords}`)
     try {
-      const result = await callDaemon<{ songs: Song[] }>('search', { keywords, limit: 20 })
-      setSearchResults(result.songs)
       setSelectedIndex(0)
-      setMode('results')
-      setMessage(result.songs.length ? `找到 ${result.songs.length} 首歌曲` : '没有搜索结果')
+      if (searchType === 'song') {
+        const result = await callDaemon<{ songs: Song[] }>('search', { keywords, limit: 20 })
+        setSearchResults(result.songs)
+        setMode('results')
+        setMessage(result.songs.length ? `找到 ${result.songs.length} 首歌曲` : '没有搜索结果')
+      } else if (searchType === 'playlist') {
+        const result = await callDaemon<{ items: PlaylistSummary[] }>('search.playlists', {
+          keywords,
+          limit: 20,
+        })
+        setSearchPlaylists(result.items)
+        setMode('search-playlists')
+        setMessage(result.items.length ? `找到 ${result.items.length} 个歌单` : '没有搜索结果')
+      } else {
+        const result = await callDaemon<{ items: CollectionSummary[] }>(
+          searchType === 'album' ? 'search.albums' : 'search.artists',
+          { keywords, limit: 20 },
+        )
+        setSearchCollections(result.items)
+        setSearchCollectionType(searchType)
+        setMode('search-collections')
+        setMessage(
+          result.items.length
+            ? `找到 ${result.items.length} 个${searchType === 'album' ? '专辑' : '歌手'}`
+            : '没有搜索结果',
+        )
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -275,11 +333,167 @@ export const NowPlaying = () => {
     }
   }
 
+  const enqueueSong = async (song: Song, next: boolean) => {
+    try {
+      await callDaemon(next ? 'queue.next' : 'queue.add', { id: song.id })
+      await refreshQueue()
+      setMessage(`${next ? '下一首播放' : '已加入队列'}：${songLabel(song)}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const showComments = async (
+    method: 'comments.song' | 'comments.playlist',
+    params: Record<string, unknown>,
+    title: string,
+    returnMode: PageMode,
+  ) => {
+    setMessage(`正在加载${title}…`)
+    try {
+      const result = await callDaemon<CommentPage>(method, { ...params, limit: 30, offset: 0 })
+      const seen = new Set<number>()
+      const rows = [...result.hotComments, ...result.comments].filter((comment) => {
+        if (seen.has(comment.id)) return false
+        seen.add(comment.id)
+        return true
+      })
+      setComments(rows)
+      setCommentIndex(0)
+      setCommentTitle(title)
+      setCommentTotal(result.total)
+      setCommentReturnMode(returnMode)
+      setMode('comments')
+      setMessage(`${title} · ${result.total} 条`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const togglePlaylistSubscription = async (playlist: PlaylistSummary) => {
+    if (playlist.creator?.id === account.profile?.userId) {
+      setMessage('自建歌单无需收藏，不能在这里取消')
+      return
+    }
+    const subscribed = !playlist.subscribed
+    try {
+      await callDaemon('library.playlist.subscribe', { id: playlist.id, subscribed })
+      setPlaylists((items) =>
+        items.map((item) => (item.id === playlist.id ? { ...item, subscribed } : item)),
+      )
+      setSearchPlaylists((items) =>
+        items.map((item) => (item.id === playlist.id ? { ...item, subscribed } : item)),
+      )
+      setMessage(`${subscribed ? '已收藏' : '已取消收藏'}：${playlist.name}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openPlaylistPicker = async (song: Song, returnMode: PageMode) => {
+    setMessage('正在加载自建歌单…')
+    try {
+      const result = await callDaemon<PlaylistSummary[]>('library.playlists')
+      const owned = result.filter((playlist) => playlist.creator?.id === account.profile?.userId)
+      if (!owned.length) {
+        setMessage('没有可添加歌曲的自建歌单，请先创建歌单')
+        return
+      }
+      setPlaylists(owned)
+      setPlaylistPickerSong(song)
+      setPlaylistPickerReturnMode(returnMode)
+      setLibraryIndex(0)
+      setMode('playlist-picker')
+      setMessage(`选择要加入的歌单：${songLabel(song)}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const submitPlaylistEdit = async () => {
+    const name = inputValue.trim()
+    if (!name) return
+    try {
+      if (playlistEditAction === 'create') {
+        await callDaemon('library.playlist.create', { name })
+        setMessage(`已创建歌单：${name}`)
+      } else if (playlistEditTarget) {
+        await callDaemon('library.playlist.rename', { id: playlistEditTarget.id, name })
+        setMessage(`歌单已重命名为：${name}`)
+      }
+      const result = await callDaemon<PlaylistSummary[]>('library.playlists')
+      setPlaylists(result)
+      setLibraryIndex(0)
+      setInputValue('')
+      setMode('playlists')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const deleteOwnedPlaylist = async (playlist: PlaylistSummary) => {
+    if (playlist.creator?.id !== account.profile?.userId) {
+      setMessage('只能删除自己的歌单')
+      return
+    }
+    if (deleteArmedId !== playlist.id) {
+      setDeleteArmedId(playlist.id)
+      if (deleteTimer.current) clearTimeout(deleteTimer.current)
+      deleteTimer.current = setTimeout(() => setDeleteArmedId(null), 4000)
+      setMessage(`再次按 Shift+D 确认删除：${playlist.name}`)
+      return
+    }
+    try {
+      await callDaemon('library.playlist.delete', { id: playlist.id })
+      const result = playlists.filter((item) => item.id !== playlist.id)
+      setPlaylists(result)
+      setLibraryIndex((index) => Math.max(0, Math.min(index, result.length - 1)))
+      setDeleteArmedId(null)
+      setMessage(`已删除歌单：${playlist.name}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const addSongToPickedPlaylist = async () => {
+    const playlist = playlists[libraryIndex]
+    const song = playlistPickerSong
+    if (!playlist || !song) return
+    try {
+      await callDaemon('library.playlist.tracks', {
+        id: playlist.id,
+        trackIds: [song.id],
+        operation: 'add',
+      })
+      setMode(playlistPickerReturnMode)
+      setMessage(`已将「${song.name}」加入：${playlist.name}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const removeTrackFromOwnedPlaylist = async (song: Song) => {
+    if (librarySource?.type !== 'playlist' || !librarySource.owned) return
+    try {
+      await callDaemon('library.playlist.tracks', {
+        id: librarySource.id,
+        trackIds: [song.id],
+        operation: 'del',
+      })
+      setLibrarySongs((items) => items.filter((item) => item.id !== song.id))
+      setLibraryIndex((index) => Math.max(0, Math.min(index, librarySongs.length - 2)))
+      setMessage(`已从歌单移除：${songLabel(song)}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const openPlaylists = async () => {
     setMessage('正在加载账号歌单…')
     try {
       const result = await callDaemon<PlaylistSummary[]>('library.playlists')
       setPlaylists(result)
+      setPlaylistPageTitle('我的歌单')
       setLibraryIndex(0)
       setMode('playlists')
       setMessage(`已加载 ${result.length} 个歌单`)
@@ -288,7 +502,7 @@ export const NowPlaying = () => {
     }
   }
 
-  const openPlaylist = async (playlist: PlaylistSummary) => {
+  const openPlaylist = async (playlist: PlaylistSummary, returnMode: PageMode = 'playlists') => {
     setMessage(`正在加载歌单：${playlist.name}…`)
     try {
       const result = await callDaemon<{ playlist: PlaylistSummary; songs: Song[] }>(
@@ -296,7 +510,13 @@ export const NowPlaying = () => {
         { id: playlist.id },
       )
       setLibrarySongs(result.songs)
-      setLibrarySource({ type: 'playlist', id: playlist.id, name: playlist.name })
+      setLibrarySource({
+        type: 'playlist',
+        id: playlist.id,
+        name: playlist.name,
+        owned: playlist.creator?.id === account.profile?.userId,
+      })
+      setTrackReturnMode(returnMode)
       setLibraryIndex(0)
       setMode('tracks')
       setMessage(`${playlist.name} · ${result.songs.length} 首歌曲`)
@@ -311,9 +531,24 @@ export const NowPlaying = () => {
       const songs = await callDaemon<Song[]>('library.daily')
       setLibrarySongs(songs)
       setLibrarySource({ type: 'daily', name: '每日推荐' })
+      setTrackReturnMode('library')
       setLibraryIndex(0)
       setMode('tracks')
       setMessage(`每日推荐 · ${songs.length} 首歌曲`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openDailyPlaylists = async () => {
+    setMessage('正在加载每日推荐歌单…')
+    try {
+      const result = await callDaemon<PlaylistSummary[]>('library.daily.playlists')
+      setPlaylists(result)
+      setPlaylistPageTitle('每日推荐歌单')
+      setLibraryIndex(0)
+      setMode('playlists')
+      setMessage(`每日推荐歌单 · ${result.length} 个`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -325,6 +560,7 @@ export const NowPlaying = () => {
       const entries = await callDaemon<HistoryEntry[]>('library.history')
       setLibrarySongs(entries.map((entry) => entry.song))
       setLibrarySource({ type: 'history', name: '最近播放' })
+      setTrackReturnMode('library')
       setLibraryIndex(0)
       setMode('tracks')
       setMessage(`最近播放 · ${entries.length} 首歌曲`)
@@ -339,6 +575,7 @@ export const NowPlaying = () => {
       const cloud = await callDaemon<CloudLibrary>('library.cloud')
       setLibrarySongs(cloud.songs)
       setLibrarySource({ type: 'cloud', name: '音乐云盘' })
+      setTrackReturnMode('library')
       setLibraryIndex(0)
       setMode('tracks')
       const usage =
@@ -372,6 +609,7 @@ export const NowPlaying = () => {
       const entries = await callDaemon<ListeningRecordEntry[]>('library.record', { range })
       setLibrarySongs(entries.map((entry) => entry.song))
       setLibrarySource({ type: 'record', range, name })
+      setTrackReturnMode('library')
       setLibraryIndex(0)
       setMode('tracks')
       setMessage(`${name} · ${entries.length} 首`)
@@ -380,7 +618,10 @@ export const NowPlaying = () => {
     }
   }
 
-  const openCollection = async (collection: CollectionSummary) => {
+  const openCollection = async (
+    collection: CollectionSummary,
+    returnMode: PageMode = 'collections',
+  ) => {
     setMessage(`正在加载：${collection.name}…`)
     try {
       const result = await callDaemon<{ collection: CollectionSummary; songs: Song[] }>(
@@ -389,6 +630,7 @@ export const NowPlaying = () => {
       )
       setLibrarySongs(result.songs)
       setLibrarySource({ type: collection.type, id: collection.id, name: collection.name })
+      setTrackReturnMode(returnMode)
       setLibraryIndex(0)
       setMode('tracks')
       setMessage(`${collection.name} · ${result.songs.length} 首歌曲`)
@@ -431,6 +673,18 @@ export const NowPlaying = () => {
       await refreshQueue()
       setMode('normal')
       setMessage('私人 FM 已开始播放')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const playHeartMode = async () => {
+    setMessage('正在生成心动模式智能队列…')
+    try {
+      await callDaemon('library.heart.play')
+      await refreshQueue()
+      setMode('normal')
+      setMessage('已进入心动模式')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -547,6 +801,24 @@ export const NowPlaying = () => {
   }
 
   useInput((input, key) => {
+    if (mode === 'playlist-edit') {
+      if (key.escape) {
+        setInputValue('')
+        setMode('playlists')
+        return
+      }
+      if (key.return) {
+        void submitPlaylistEdit()
+        return
+      }
+      if (key.backspace || key.delete) {
+        setInputValue((value) => value.slice(0, -1))
+        return
+      }
+      if (input && !key.ctrl && !key.meta) setInputValue((value) => value + input)
+      return
+    }
+
     if (mode === 'search' || mode === 'cookie') {
       if (key.escape) {
         setInputValue('')
@@ -555,6 +827,11 @@ export const NowPlaying = () => {
       }
       if (key.return) {
         void (mode === 'search' ? submitSearch() : submitCookie())
+        return
+      }
+      if (mode === 'search' && key.tab) {
+        const index = searchTypes.indexOf(searchType)
+        setSearchType(searchTypes[(index + 1) % searchTypes.length] || 'song')
         return
       }
       if (key.backspace || key.delete) {
@@ -576,6 +853,50 @@ export const NowPlaying = () => {
         return setSelectedIndex((index) => Math.min(searchResults.length - 1, index + 1))
       }
       if (key.return && searchResults[selectedIndex]) void playSearchResult(selectedIndex)
+      if (input === 'n' && searchResults[selectedIndex]) {
+        void enqueueSong(searchResults[selectedIndex], true)
+      }
+      if (input === 'e' && searchResults[selectedIndex]) {
+        void enqueueSong(searchResults[selectedIndex], false)
+      }
+      if (input === 's' && searchResults[selectedIndex]) {
+        void openPlaylistPicker(searchResults[selectedIndex], 'results')
+      }
+      return
+    }
+
+    if (mode === 'search-playlists') {
+      if (key.escape) return setMode('normal')
+      if (input === '/') {
+        setInputValue('')
+        return setMode('search')
+      }
+      if (key.upArrow) return setSelectedIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setSelectedIndex((index) => Math.min(searchPlaylists.length - 1, index + 1))
+      }
+      if (key.return && searchPlaylists[selectedIndex]) {
+        void openPlaylist(searchPlaylists[selectedIndex], 'search-playlists')
+      }
+      if (input === 'f' && searchPlaylists[selectedIndex]) {
+        void togglePlaylistSubscription(searchPlaylists[selectedIndex])
+      }
+      return
+    }
+
+    if (mode === 'search-collections') {
+      if (key.escape) return setMode('normal')
+      if (input === '/') {
+        setInputValue('')
+        return setMode('search')
+      }
+      if (key.upArrow) return setSelectedIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setSelectedIndex((index) => Math.min(searchCollections.length - 1, index + 1))
+      }
+      if (key.return && searchCollections[selectedIndex]) {
+        void openCollection(searchCollections[selectedIndex], 'search-collections')
+      }
       return
     }
 
@@ -593,23 +914,59 @@ export const NowPlaying = () => {
           })
           .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
       }
+      if (input === 'x' && queue.songs[queueIndex]) {
+        const removed = queue.songs[queueIndex]
+        void callDaemon<QueueSnapshot>('queue.remove', { index: queueIndex })
+          .then((result) => {
+            setQueue(result)
+            setQueueIndex(Math.max(0, Math.min(queueIndex, result.songs.length - 1)))
+            setMessage(`已从队列移除：${songLabel(removed)}`)
+          })
+          .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
+      }
+      if ((input === '[' || input === ']') && queue.songs[queueIndex]) {
+        const target = Math.max(
+          0,
+          Math.min(queue.songs.length - 1, queueIndex + (input === '[' ? -1 : 1)),
+        )
+        if (target !== queueIndex) {
+          void callDaemon<QueueSnapshot>('queue.move', { from: queueIndex, to: target })
+            .then((result) => {
+              setQueue(result)
+              setQueueIndex(target)
+              setMessage('已调整队列顺序')
+            })
+            .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
+        }
+      }
+      if (input === 'C' && queue.songs.length) {
+        void callDaemon<QueueSnapshot>('queue.clear')
+          .then((result) => {
+            setQueue(result)
+            setQueueIndex(0)
+            setMessage('播放队列已清空')
+          })
+          .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
+      }
       return
     }
 
     if (mode === 'library') {
       if (key.escape || input === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(8, index + 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(10, index + 1))
       if (key.return) {
         if (libraryIndex === 0) void openPlaylists()
         if (libraryIndex === 1) void openDaily()
-        if (libraryIndex === 2) void playFm()
-        if (libraryIndex === 3) void openHistory()
-        if (libraryIndex === 4) void openCloud()
-        if (libraryIndex === 5) void openCollections('album')
-        if (libraryIndex === 6) void openCollections('artist')
-        if (libraryIndex === 7) void openListeningRecord('week')
-        if (libraryIndex === 8) void openListeningRecord('all')
+        if (libraryIndex === 2) void openDailyPlaylists()
+        if (libraryIndex === 3) void playFm()
+        if (libraryIndex === 4) void playHeartMode()
+        if (libraryIndex === 5) void openHistory()
+        if (libraryIndex === 6) void openCloud()
+        if (libraryIndex === 7) void openCollections('album')
+        if (libraryIndex === 8) void openCollections('artist')
+        if (libraryIndex === 9) void openListeningRecord('week')
+        if (libraryIndex === 10) void openListeningRecord('all')
       }
       return
     }
@@ -620,6 +977,39 @@ export const NowPlaying = () => {
       if (key.downArrow)
         return setLibraryIndex((index) => Math.min(playlists.length - 1, index + 1))
       if (key.return && playlists[libraryIndex]) void openPlaylist(playlists[libraryIndex])
+      if (input === 'f' && playlists[libraryIndex]) {
+        void togglePlaylistSubscription(playlists[libraryIndex])
+      }
+      if (input === 'c') {
+        setPlaylistEditAction('create')
+        setPlaylistEditTarget(null)
+        setInputValue('')
+        setMode('playlist-edit')
+      }
+      if (input === 'R' && playlists[libraryIndex]) {
+        const playlist = playlists[libraryIndex]
+        if (playlist.creator?.id !== account.profile?.userId) {
+          setMessage('只能重命名自己的歌单')
+        } else {
+          setPlaylistEditAction('rename')
+          setPlaylistEditTarget(playlist)
+          setInputValue(playlist.name)
+          setMode('playlist-edit')
+        }
+      }
+      if (input === 'D' && playlists[libraryIndex]) {
+        void deleteOwnedPlaylist(playlists[libraryIndex])
+      }
+      return
+    }
+
+    if (mode === 'playlist-picker') {
+      if (key.escape) return setMode(playlistPickerReturnMode)
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setLibraryIndex((index) => Math.min(playlists.length - 1, index + 1))
+      }
+      if (key.return) void addSongToPickedPlaylist()
       return
     }
 
@@ -633,18 +1023,46 @@ export const NowPlaying = () => {
     }
 
     if (mode === 'tracks') {
-      if (key.escape) {
-        if (librarySource?.type === 'playlist') return setMode('playlists')
-        if (librarySource?.type === 'album' || librarySource?.type === 'artist') {
-          return setMode('collections')
-        }
-        return setMode('library')
-      }
+      if (key.escape) return setMode(trackReturnMode)
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
       if (key.downArrow)
         return setLibraryIndex((index) => Math.min(librarySongs.length - 1, index + 1))
       if (key.return && librarySongs[libraryIndex]) void playLibrary(libraryIndex)
       if (input === 'a' && librarySongs.length) void playLibrary(0)
+      if (input === 'n' && librarySongs[libraryIndex]) {
+        void enqueueSong(librarySongs[libraryIndex], true)
+      }
+      if (input === 'e' && librarySongs[libraryIndex]) {
+        void enqueueSong(librarySongs[libraryIndex], false)
+      }
+      if (input === 's' && librarySongs[libraryIndex]) {
+        void openPlaylistPicker(librarySongs[libraryIndex], 'tracks')
+      }
+      if (
+        input === 'x' &&
+        librarySongs[libraryIndex] &&
+        librarySource?.type === 'playlist' &&
+        librarySource.owned
+      ) {
+        void removeTrackFromOwnedPlaylist(librarySongs[libraryIndex])
+      }
+      if (input === 'r' && librarySource?.type === 'playlist') {
+        void showComments(
+          'comments.playlist',
+          { id: librarySource.id },
+          `${librarySource.name} · 歌单评论`,
+          'tracks',
+        )
+      }
+      return
+    }
+
+    if (mode === 'comments') {
+      if (key.escape) return setMode(commentReturnMode)
+      if (key.upArrow) return setCommentIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setCommentIndex((index) => Math.min(Math.max(0, comments.length - 1), index + 1))
+      }
       return
     }
 
@@ -703,6 +1121,17 @@ export const NowPlaying = () => {
       return setMode('library')
     }
     if (input === 'o' || input === ',') return void openSettings()
+    if (input === 's' && status.song) {
+      return void openPlaylistPicker(status.song, 'normal')
+    }
+    if (input === 'r' && status.song) {
+      return void showComments(
+        'comments.song',
+        { id: status.song.id },
+        `${status.song.name} · 歌曲评论`,
+        'normal',
+      )
+    }
     if (key.tab) return setMode('queue')
     if (input === 'f' && status.song) {
       runControl('like', { id: status.song.id, liked: !status.liked })
@@ -731,9 +1160,41 @@ export const NowPlaying = () => {
   const progressWidth = Math.max(10, Math.min(60, terminalWidth - 28))
   const progress = status.duration ? Math.max(0, Math.min(1, status.position / status.duration)) : 0
   const filled = Math.round(progress * progressWidth)
-  const progressBar = `${'━'.repeat(filled)}${'─'.repeat(progressWidth - filled)}`
+  const progressFilled = '━'.repeat(filled)
+  const progressEmpty = '─'.repeat(progressWidth - filled)
+  const modeLabel: Record<PlaybackMode, string> = {
+    sequence: '顺序播放',
+    'repeat-one': '单曲循环',
+    shuffle: '随机播放',
+  }
+  const sourceLabel =
+    status.source === 'official'
+      ? '网易云官方'
+      : status.source === 'unblock'
+        ? `解灰 · ${status.sourceName || 'auto'}`
+        : status.source === 'trial'
+          ? '官方试听'
+          : '等待音源'
+  const stateIcon =
+    status.state === 'playing'
+      ? '▶'
+      : status.state === 'paused'
+        ? 'Ⅱ'
+        : status.state === 'loading'
+          ? '◌'
+          : '■'
   const resultStart = Math.max(0, Math.min(selectedIndex - 3, searchResults.length - 8))
   const visibleResults = searchResults.slice(resultStart, resultStart + 8)
+  const searchPlaylistStart = Math.max(0, Math.min(selectedIndex - 3, searchPlaylists.length - 8))
+  const visibleSearchPlaylists = searchPlaylists.slice(searchPlaylistStart, searchPlaylistStart + 8)
+  const searchCollectionStart = Math.max(
+    0,
+    Math.min(selectedIndex - 3, searchCollections.length - 8),
+  )
+  const visibleSearchCollections = searchCollections.slice(
+    searchCollectionStart,
+    searchCollectionStart + 8,
+  )
   const queueStart = Math.max(0, Math.min(queueIndex - 3, queue.songs.length - 8))
   const visibleQueue = queue.songs.slice(queueStart, queueStart + 8)
   const playlistStart = Math.max(0, Math.min(libraryIndex - 3, playlists.length - 8))
@@ -742,6 +1203,8 @@ export const NowPlaying = () => {
   const visibleCollections = collections.slice(collectionStart, collectionStart + 8)
   const trackStart = Math.max(0, Math.min(libraryIndex - 3, librarySongs.length - 8))
   const visibleTracks = librarySongs.slice(trackStart, trackStart + 8)
+  const commentStart = Math.max(0, Math.min(commentIndex - 2, comments.length - 6))
+  const visibleComments = comments.slice(commentStart, commentStart + 6)
   const shownInput = inputValue.slice(-Math.max(12, terminalWidth - 18))
   const settingsRows: Array<[string, string]> = settingsConfig
     ? [
@@ -761,19 +1224,31 @@ export const NowPlaying = () => {
     : []
 
   const interactionPanel = (
-    <Box marginTop={1} borderStyle="round" paddingX={1} flexDirection="column">
+    <Box
+      marginTop={1}
+      borderStyle="round"
+      borderColor={mode === 'normal' ? 'gray' : 'cyan'}
+      paddingX={1}
+      flexDirection="column"
+    >
       {mode === 'normal' ? (
         <>
-          <Text>一页操作：/ 搜索 · l 音乐库 · Tab 队列 · o/, 设置</Text>
+          <Text>
+            <Text color="cyan">/</Text> 搜索 · <Text color="cyan">L</Text> 音乐库 ·{' '}
+            <Text color="cyan">TAB</Text> 队列 · <Text color="cyan">R</Text> 评论 ·{' '}
+            <Text color="cyan">S</Text> 加歌单 · <Text color="cyan">O</Text> 设置
+          </Text>
           <Text dimColor>
-            Space 暂停 · 方向键进度/音量 · p/n 切歌 · f 喜欢 · m 模式 · o/, 设置
+            SPACE 播放/暂停 · ← → 进度 · ↑ ↓ 音量 · P / N 切歌 · F 喜欢 · M 模式
             {status.queueContext?.type === 'fm' ? ' · d FM 垃圾桶' : ''}
           </Text>
         </>
       ) : null}
       {mode === 'search' ? (
         <Text>
-          搜索歌曲 › <Text color="cyan">{shownInput || '输入关键词'}█</Text>
+          搜索{searchTypeLabels[searchType]} ›{' '}
+          <Text color="cyan">{shownInput || '输入关键词'}█</Text>
+          <Text dimColor> Tab 切换类型</Text>
         </Text>
       ) : null}
       {mode === 'cookie' ? (
@@ -787,7 +1262,7 @@ export const NowPlaying = () => {
       ) : null}
       {mode === 'results' ? (
         <>
-          <Text bold>搜索结果（↑/↓ 选择，Enter 播放，/ 重新搜索）</Text>
+          <Text bold>搜索结果（Enter 播放，n 下一首，e 入队列，s 加歌单，/ 搜索）</Text>
           {visibleResults.map((song, offset) => {
             const index = resultStart + offset
             return (
@@ -799,9 +1274,46 @@ export const NowPlaying = () => {
           })}
         </>
       ) : null}
+      {mode === 'search-playlists' ? (
+        <>
+          <Text bold>歌单搜索结果（↑/↓ 选择，Enter 查看，f 收藏/取消，/ 搜索）</Text>
+          {visibleSearchPlaylists.map((playlist, offset) => {
+            const index = searchPlaylistStart + offset
+            return (
+              <Text key={playlist.id} color={index === selectedIndex ? 'cyan' : undefined}>
+                {index === selectedIndex ? '▶ ' : '  '}
+                {playlist.subscribed ? '♥ ' : ''}
+                {playlist.name} · {playlist.trackCount} 首 [{playlist.id}]
+              </Text>
+            )
+          })}
+        </>
+      ) : null}
+      {mode === 'search-collections' ? (
+        <>
+          <Text bold>
+            {searchCollectionType === 'album' ? '专辑' : '歌手'}搜索结果（↑/↓ 选择，Enter 查看，/
+            搜索）
+          </Text>
+          {visibleSearchCollections.map((collection, offset) => {
+            const index = searchCollectionStart + offset
+            return (
+              <Text
+                key={`${collection.type}-${collection.id}`}
+                color={index === selectedIndex ? 'cyan' : undefined}
+              >
+                {index === selectedIndex ? '▶ ' : '  '}
+                {collection.name}
+                {collection.subtitle ? ` — ${collection.subtitle}` : ''}
+                {collection.count ? ` · ${collection.count} 首` : ''}
+              </Text>
+            )
+          })}
+        </>
+      ) : null}
       {mode === 'queue' ? (
         <>
-          <Text bold>播放队列（↑/↓ 选择，Enter 播放，Tab/Esc 返回）</Text>
+          <Text bold>播放队列（↑/↓ 选择，Enter 播放，x 删除，[ / ] 移动，Shift+C 清空）</Text>
           {visibleQueue.length ? (
             visibleQueue.map((song, offset) => {
               const index = queueStart + offset
@@ -822,8 +1334,10 @@ export const NowPlaying = () => {
           <Text bold>音乐库（↑/↓ 选择，Enter 打开，l/Esc 返回）</Text>
           {[
             '我的歌单',
-            '每日推荐',
+            '每日推荐歌曲',
+            '每日推荐歌单',
             '私人 FM',
+            '心动模式',
             '最近播放',
             '音乐云盘',
             '收藏专辑',
@@ -840,7 +1354,33 @@ export const NowPlaying = () => {
       ) : null}
       {mode === 'playlists' ? (
         <>
-          <Text bold>我的歌单（↑/↓ 选择，Enter 查看，Esc 返回）</Text>
+          <Text bold>
+            {playlistPageTitle}（Enter 查看，c 创建，Shift+R 重命名，Shift+D 删除，f 收藏）
+          </Text>
+          {visiblePlaylists.map((playlist, offset) => {
+            const index = playlistStart + offset
+            return (
+              <Text key={playlist.id} color={index === libraryIndex ? 'cyan' : undefined}>
+                {index === libraryIndex ? '▶ ' : '  '}
+                {playlist.subscribed ? '♥ ' : ''}
+                {playlist.name} · {playlist.trackCount} 首
+              </Text>
+            )
+          })}
+        </>
+      ) : null}
+      {mode === 'playlist-edit' ? (
+        <Text>
+          {playlistEditAction === 'create' ? '创建歌单' : '重命名歌单'} ›{' '}
+          <Text color="cyan">{shownInput || '输入歌单名称'}█</Text>
+          <Text dimColor> Enter 保存 · Esc 取消</Text>
+        </Text>
+      ) : null}
+      {mode === 'playlist-picker' ? (
+        <>
+          <Text bold>
+            加入歌单 · {playlistPickerSong?.name || '歌曲'}（↑/↓ 选择，Enter 确认，Esc 返回）
+          </Text>
           {visiblePlaylists.map((playlist, offset) => {
             const index = playlistStart + offset
             return (
@@ -876,7 +1416,11 @@ export const NowPlaying = () => {
       {mode === 'tracks' ? (
         <>
           <Text bold>
-            {librarySource?.name || '歌曲列表'}（↑/↓ 选择，Enter 从此播放，a 播放全部，Esc 返回）
+            {librarySource?.name || '歌曲列表'}（Enter 播放，a 全部，n 下一首，e 入队列，s 加歌单
+            {librarySource?.type === 'playlist'
+              ? `，r 评论${librarySource.owned ? '，x 移除' : ''}`
+              : ''}
+            ，Esc 返回）
           </Text>
           {visibleTracks.map((song, offset) => {
             const index = trackStart + offset
@@ -887,6 +1431,32 @@ export const NowPlaying = () => {
               </Text>
             )
           })}
+        </>
+      ) : null}
+      {mode === 'comments' ? (
+        <>
+          <Text bold>
+            {commentTitle}（{commentTotal} 条，↑/↓ 浏览，Esc 返回）
+          </Text>
+          {visibleComments.length ? (
+            visibleComments.map((comment, offset) => {
+              const index = commentStart + offset
+              return (
+                <Box key={comment.id} flexDirection="column" marginBottom={1}>
+                  <Text color={index === commentIndex ? 'cyan' : undefined}>
+                    {index === commentIndex ? '▶ ' : '  '}
+                    {comment.user.nickname} · ♡ {comment.likedCount} ·{' '}
+                    {new Date(comment.time).toLocaleDateString('zh-CN')}
+                  </Text>
+                  <Text>
+                    {comment.content.replace(/\s+/g, ' ').slice(0, Math.max(12, terminalWidth - 6))}
+                  </Text>
+                </Box>
+              )
+            })
+          ) : (
+            <Text dimColor>暂无评论</Text>
+          )}
         </>
       ) : null}
       {mode === 'settings' ? (
@@ -934,52 +1504,67 @@ export const NowPlaying = () => {
   )
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} paddingTop={1}>
       <Box justifyContent="space-between">
-        <Text bold color={process.env.NO_COLOR ? undefined : 'green'}>
-          CloudMusic CLI
+        <Text bold color={process.env.NO_COLOR ? undefined : 'red'}>
+          ◆ CLOUDMUSIC <Text dimColor>TERMINAL PLAYER</Text>
         </Text>
         <Text color={account.loggedIn ? 'green' : 'yellow'}>
           {account.loggedIn
-            ? `网易云：${account.profile?.nickname || account.profile?.userId}`
-            : '网易云：未登录'}
+            ? `● ${account.profile?.nickname || account.profile?.userId}`
+            : '○ 未登录'}
         </Text>
       </Box>
 
-      <Box marginTop={1} flexDirection="column">
-        <Text>
-          {status.state === 'playing' ? '▶' : status.state === 'paused' ? '⏸' : '■'}{' '}
-          {status.song?.name || '尚未播放歌曲'}
+      <Box marginTop={1} borderStyle="round" borderColor="red" paddingX={2} flexDirection="column">
+        <Box justifyContent="space-between">
+          <Text bold color="white">
+            <Text color="red">{stateIcon}</Text> {status.song?.name || '选择一首歌开始播放'}
+          </Text>
+          <Text color={status.liked ? 'red' : 'gray'}>{status.liked ? '♥' : '♡'}</Text>
+        </Box>
+        <Text dimColor>
+          {artists} · {status.song?.album.name || '暂无专辑信息'}
+        </Text>
+        <Box marginTop={1}>
+          <Text dimColor>{formatTime(status.position)} </Text>
+          <Text color="red">{progressFilled}</Text>
+          <Text dimColor>{progressEmpty}</Text>
+          <Text dimColor> {formatTime(status.duration)}</Text>
+        </Box>
+        <Text dimColor>
+          {modeLabel[status.mode]} · 音量 {status.volume}% · {status.quality || '未知音质'} ·{' '}
+          {sourceLabel}
         </Text>
         <Text dimColor>
-          {artists} · {status.song?.album.name || '—'}
-        </Text>
-        <Text>
-          {formatTime(status.position)} {progressBar} {formatTime(status.duration)}
-        </Text>
-        <Text dimColor>
-          音量 {status.volume}% · 音质 {status.quality || '—'} · 来源 {status.source || '—'}
-          {status.sourceName ? `:${status.sourceName}` : ''} · 队列 {status.queueIndex + 1}/
-          {status.queueLength} · 模式 {status.mode} · {status.liked ? '♥ 已喜欢' : '♡ 未喜欢'}
-        </Text>
-        <Text dimColor>
-          列表：{status.queueContext?.name || status.queueContext?.type || '临时队列'} · 听歌上报{' '}
-          {status.scrobbleEnabled ? `开启(${status.scrobbleMode})` : '关闭'}
+          {status.queueContext?.name || '临时队列'} · {Math.max(0, status.queueIndex + 1)} /{' '}
+          {status.queueLength} · 听歌上报 {status.scrobbleEnabled ? status.scrobbleMode : '关闭'}
         </Text>
       </Box>
 
-      <Box marginTop={1} flexDirection="column">
-        <Text bold>{status.currentLyric || '暂无同步歌词'}</Text>
+      <Box marginTop={1} paddingX={2} flexDirection="column">
+        <Text dimColor>LYRICS</Text>
+        <Text bold color="cyan">
+          {status.currentLyric || '暂无同步歌词'}
+        </Text>
         <Text dimColor>{status.nextLyric || ' '}</Text>
       </Box>
 
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} paddingX={2} flexDirection="column">
+        <Box justifyContent="space-between">
+          <Text dimColor>SPECTRUM</Text>
+          <Text dimColor>48 kHz · PCM</Text>
+        </Box>
         <Spectrum frame={spectrum} width={terminalWidth} />
       </Box>
 
       {interactionPanel}
-      <Text color={status.error ? 'red' : 'yellow'}>{status.error || message}</Text>
-      <Text dimColor>q 退出页面但保留后台播放</Text>
+      <Box justifyContent="space-between" paddingX={1}>
+        <Text color={status.error ? 'red' : 'yellow'}>
+          {status.error ? `! ${status.error}` : `› ${message}`}
+        </Text>
+        <Text dimColor>Q 退出界面 · 后台继续播放</Text>
+      </Box>
     </Box>
   )
 }

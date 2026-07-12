@@ -7,6 +7,8 @@ import type {
   CollectionSummary,
   ListeningRecordEntry,
   LyricLine,
+  CommentPage,
+  MusicComment,
   PlaylistSummary,
   QueueContext,
   ScrobbleMode,
@@ -68,6 +70,19 @@ export const normalizePlaylist = (raw: any): PlaylistSummary => ({
   specialType: Number(raw?.specialType || 0),
 })
 
+const normalizeComment = (raw: any): MusicComment => ({
+  id: Number(raw?.commentId || raw?.id),
+  content: String(raw?.content || ''),
+  time: Number(raw?.time || 0),
+  likedCount: Number(raw?.likedCount || 0),
+  liked: Boolean(raw?.liked),
+  user: {
+    id: Number(raw?.user?.userId || 0),
+    nickname: String(raw?.user?.nickname || '网易云用户'),
+    avatar: raw?.user?.avatarUrl,
+  },
+})
+
 export class NeteaseApi {
   constructor(private readonly getCookie: () => string) {}
 
@@ -109,6 +124,50 @@ export class NeteaseApi {
     return {
       songs: (result?.result?.songs || []).map(normalizeSong),
       total: Number(result?.result?.songCount || 0),
+      hasMore: Boolean(result?.result?.hasMore),
+    }
+  }
+
+  async searchPlaylists(keywords: string, limit = 20, offset = 0) {
+    const result = await this.call<any>('cloudsearch', { keywords, type: 1000, limit, offset })
+    return {
+      items: (result?.result?.playlists || []).map(normalizePlaylist),
+      total: Number(result?.result?.playlistCount || 0),
+      hasMore: Boolean(result?.result?.hasMore),
+    }
+  }
+
+  async searchAlbums(keywords: string, limit = 20, offset = 0) {
+    const result = await this.call<any>('cloudsearch', { keywords, type: 10, limit, offset })
+    return {
+      items: (result?.result?.albums || []).map((album: any) => ({
+        id: Number(album?.id),
+        name: String(album?.name || '未知专辑'),
+        type: 'album' as const,
+        cover: album?.picUrl,
+        subtitle: (album?.artists || [])
+          .map((artist: any) => artist?.name)
+          .filter(Boolean)
+          .join(' / '),
+        count: Number(album?.size || 0),
+      })),
+      total: Number(result?.result?.albumCount || 0),
+      hasMore: Boolean(result?.result?.hasMore),
+    }
+  }
+
+  async searchArtists(keywords: string, limit = 20, offset = 0) {
+    const result = await this.call<any>('cloudsearch', { keywords, type: 100, limit, offset })
+    return {
+      items: (result?.result?.artists || []).map((artist: any) => ({
+        id: Number(artist?.id),
+        name: String(artist?.name || '未知歌手'),
+        type: 'artist' as const,
+        cover: artist?.picUrl || artist?.img1v1Url,
+        subtitle: artist?.alias?.length ? artist.alias.join(' / ') : undefined,
+        count: Number(artist?.musicSize || 0),
+      })),
+      total: Number(result?.result?.artistCount || 0),
       hasMore: Boolean(result?.result?.hasMore),
     }
   }
@@ -291,6 +350,95 @@ export class NeteaseApi {
       if (page.length < pageSize) break
     }
     return { playlist: { ...detail, trackCount: songs.length }, songs }
+  }
+
+  async subscribePlaylist(id: number, subscribed: boolean) {
+    const result = await this.call<any>('playlist_subscribe', {
+      id,
+      t: subscribed ? 1 : 2,
+      timestamp: Date.now(),
+    })
+    if (result?.code !== undefined && Number(result.code) !== 200) {
+      throw new AppError(
+        'PLAYLIST_SUBSCRIBE_FAILED',
+        `${subscribed ? '收藏' : '取消收藏'}歌单失败：${result?.message || result?.msg || result.code}`,
+      )
+    }
+    return result
+  }
+
+  private ensureMutation(result: any, action: string) {
+    const code = Number(result?.code ?? 200)
+    if (code !== 200) {
+      throw new AppError(
+        'PLAYLIST_MUTATION_FAILED',
+        `${action}失败：${result?.message || result?.msg || code}`,
+        result,
+      )
+    }
+    return result
+  }
+
+  async createPlaylist(name: string, privacy: 0 | 10 = 0) {
+    const result = this.ensureMutation(
+      await this.call<any>('playlist_create', { name, privacy, timestamp: Date.now() }),
+      '创建歌单',
+    )
+    if (!result?.playlist?.id) throw new AppError('PLAYLIST_CREATE_FAILED', '创建歌单未返回歌单信息')
+    return normalizePlaylist(result.playlist)
+  }
+
+  async renamePlaylist(id: number, name: string) {
+    this.ensureMutation(
+      await this.call<any>('playlist_name_update', { id, name, timestamp: Date.now() }),
+      '重命名歌单',
+    )
+    return { id, name }
+  }
+
+  async deletePlaylist(id: number) {
+    this.ensureMutation(
+      await this.call<any>('playlist_delete', { id, timestamp: Date.now() }),
+      '删除歌单',
+    )
+    return { id, deleted: true }
+  }
+
+  async updatePlaylistTracks(id: number, trackIds: number[], operation: 'add' | 'del') {
+    if (!trackIds.length) throw new AppError('INVALID_ARGUMENT', '歌曲 ID 列表不能为空')
+    const result = this.ensureMutation(
+      await this.call<any>('playlist_tracks', {
+        op: operation,
+        pid: id,
+        tracks: trackIds.join(','),
+        timestamp: Date.now(),
+      }),
+      operation === 'add' ? '添加歌曲到歌单' : '从歌单移除歌曲',
+    )
+    return { id, trackIds, operation, count: Number(result?.count || trackIds.length) }
+  }
+
+  private async comments(
+    method: 'comment_music' | 'comment_playlist',
+    id: number,
+    limit = 20,
+    offset = 0,
+  ): Promise<CommentPage> {
+    const result = await this.call<any>(method, { id, limit, offset, timestamp: Date.now() })
+    return {
+      comments: (result?.comments || []).map(normalizeComment),
+      hotComments: (result?.hotComments || []).map(normalizeComment),
+      total: Number(result?.total || 0),
+      more: Boolean(result?.more),
+    }
+  }
+
+  songComments(id: number, limit = 20, offset = 0) {
+    return this.comments('comment_music', id, limit, offset)
+  }
+
+  playlistComments(id: number, limit = 20, offset = 0) {
+    return this.comments('comment_playlist', id, limit, offset)
   }
 
   async dailySongs() {

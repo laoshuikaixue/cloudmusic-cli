@@ -29,6 +29,12 @@ const stringParam = (value: unknown, name: string) => {
   return value.trim()
 }
 
+const playlistNameParam = (value: unknown) => {
+  const name = stringParam(value, 'name')
+  if ([...name].length > 40) throw new AppError('INVALID_ARGUMENT', '歌单名称不能超过 40 个字符')
+  return name
+}
+
 const numberArrayParam = (value: unknown, name: string) => {
   if (!Array.isArray(value)) throw new AppError('INVALID_ARGUMENT', `${name} 必须是数组`)
   const numbers = value.map(Number)
@@ -513,10 +519,15 @@ export class PlayerDaemon {
       'queue.replace',
       'queue.append',
       'queue.add',
+      'queue.next',
       'queue.remove',
       'queue.move',
       'queue.clear',
       'library.playlist.play',
+      'library.playlist.create',
+      'library.playlist.rename',
+      'library.playlist.delete',
+      'library.playlist.tracks',
       'library.daily.play',
       'library.fm.play',
       'library.fm.trash',
@@ -543,6 +554,24 @@ export class PlayerDaemon {
         return this.status()
       case 'search':
         return this.api.search(
+          stringParam(params.keywords, 'keywords'),
+          Number(params.limit || 20),
+          Number(params.offset || 0),
+        )
+      case 'search.playlists':
+        return this.api.searchPlaylists(
+          stringParam(params.keywords, 'keywords'),
+          Number(params.limit || 20),
+          Number(params.offset || 0),
+        )
+      case 'search.albums':
+        return this.api.searchAlbums(
+          stringParam(params.keywords, 'keywords'),
+          Number(params.limit || 20),
+          Number(params.offset || 0),
+        )
+      case 'search.artists':
+        return this.api.searchArtists(
           stringParam(params.keywords, 'keywords'),
           Number(params.limit || 20),
           Number(params.offset || 0),
@@ -601,18 +630,39 @@ export class PlayerDaemon {
         await this.persistQueue()
         return this.queue
       }
+      case 'queue.next': {
+        const song = await this.api.songDetail(numberParam(params.id, 'id'))
+        const currentIndex = this.queue.index
+        const existingIndex = this.queue.songs.findIndex(
+          (item, index) => item.id === song.id && index !== currentIndex,
+        )
+        if (existingIndex >= 0) {
+          this.queue.songs.splice(existingIndex, 1)
+          if (existingIndex < this.queue.index) this.queue.index -= 1
+        }
+        const insertIndex = this.queue.index >= 0 ? this.queue.index + 1 : 0
+        this.queue.songs.splice(insertIndex, 0, song)
+        if (this.queue.index < 0) this.queue.index = 0
+        await this.persistQueue()
+        return this.queue
+      }
       case 'queue.remove': {
         const index = numberParam(params.index, 'index')
         if (index < 0 || index >= this.queue.songs.length) {
           throw new AppError('INVALID_ARGUMENT', '队列索引超出范围')
         }
-        const currentSong = this.song
+        const removingCurrent = index === this.queue.index
         this.queue.songs.splice(index, 1)
-        if (!this.queue.songs.length) this.queue.index = -1
-        else if (currentSong) {
-          const currentIndex = this.queue.songs.indexOf(currentSong)
-          this.queue.index =
-            currentIndex >= 0 ? currentIndex : Math.min(index, this.queue.songs.length - 1)
+        if (!this.queue.songs.length) {
+          this.queue.index = -1
+          await this.pipeline.stop()
+          await this.finalizeHistory()
+          this.state = 'stopped'
+        } else if (removingCurrent) {
+          this.queue.index = Math.min(index, this.queue.songs.length - 1)
+          await this.startSong(this.song as Song)
+        } else if (index < this.queue.index) {
+          this.queue.index -= 1
         }
         await this.persistQueue()
         return this.queue
@@ -681,6 +731,24 @@ export class PlayerDaemon {
         return this.playPlaylist(
           numberParam(params.id, 'id'),
           params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
+      case 'library.playlist.subscribe': {
+        const id = numberParam(params.id, 'id')
+        const subscribed = params.subscribed !== false
+        await this.api.subscribePlaylist(id, subscribed)
+        return { id, subscribed }
+      }
+      case 'library.playlist.create':
+        return this.api.createPlaylist(playlistNameParam(params.name), params.private ? 10 : 0)
+      case 'library.playlist.rename':
+        return this.api.renamePlaylist(numberParam(params.id, 'id'), playlistNameParam(params.name))
+      case 'library.playlist.delete':
+        return this.api.deletePlaylist(numberParam(params.id, 'id'))
+      case 'library.playlist.tracks':
+        return this.api.updatePlaylistTracks(
+          numberParam(params.id, 'id'),
+          numberArrayParam(params.trackIds, 'trackIds'),
+          params.operation === 'del' ? 'del' : 'add',
         )
       case 'library.daily':
         return this.api.dailySongs()
@@ -769,6 +837,21 @@ export class PlayerDaemon {
         else this.likedSongIds.delete(id)
         return { liked, id, result }
       }
+      case 'comments.song': {
+        const id = params.id === undefined ? this.song?.id : numberParam(params.id, 'id')
+        if (!id) throw new AppError('NOT_PLAYING', '当前没有歌曲')
+        return this.api.songComments(
+          id,
+          params.limit === undefined ? 20 : numberParam(params.limit, 'limit'),
+          params.offset === undefined ? 0 : numberParam(params.offset, 'offset'),
+        )
+      }
+      case 'comments.playlist':
+        return this.api.playlistComments(
+          numberParam(params.id, 'id'),
+          params.limit === undefined ? 20 : numberParam(params.limit, 'limit'),
+          params.offset === undefined ? 0 : numberParam(params.offset, 'offset'),
+        )
       case 'source.status':
         return {
           config: this.config.unblock,

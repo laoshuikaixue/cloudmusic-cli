@@ -8,7 +8,15 @@ import { ensureDaemon, requestDaemon, subscribeDaemon } from './ipc/client.js'
 import { runMcpServer } from './mcp/server.js'
 import { NowPlaying } from './tui/now-playing.js'
 import { toAppError } from './core/errors.js'
-import type { OutputEnvelope, PlaybackStatus, Song, SpectrumFrame } from './core/types.js'
+import type {
+  CommentPage,
+  CollectionSummary,
+  OutputEnvelope,
+  PlaybackStatus,
+  PlaylistSummary,
+  Song,
+  SpectrumFrame,
+} from './core/types.js'
 
 const VERSION = '0.1.0'
 
@@ -98,15 +106,44 @@ const readCookieInput = async () => {
 
 program
   .command('search <keywords>')
-  .description('搜索歌曲')
+  .description('搜索歌曲、歌单、专辑或歌手')
   .option('-l, --limit <number>', '返回数量', '20')
+  .option('-t, --type <type>', '搜索类型：song、playlist、album、artist', 'song')
   .action(async (keywords, options) => {
-    const result = await withDaemon<{ songs: Song[]; total: number }>('search', {
-      keywords,
-      limit: Number(options.limit),
-    })
-    output(result, () =>
-      result.songs.forEach((song, index) => console.log(formatSong(song, index))),
+    const type = String(options.type)
+    if (!['song', 'playlist', 'album', 'artist'].includes(type)) {
+      throw new Error('type 必须是 song、playlist、album 或 artist')
+    }
+    if (type === 'song') {
+      const result = await withDaemon<{ songs: Song[]; total: number }>('search', {
+        keywords,
+        limit: Number(options.limit),
+      })
+      return output(result, () =>
+        result.songs.forEach((song, index) => console.log(formatSong(song, index))),
+      )
+    }
+    if (type === 'playlist') {
+      const result = await withDaemon<{ items: PlaylistSummary[]; total: number }>(
+        'search.playlists',
+        { keywords, limit: Number(options.limit) },
+      )
+      return output(result, () =>
+        result.items.forEach((item, index) =>
+          console.log(`${index + 1}. ${item.name} · ${item.trackCount} 首 [${item.id}]`),
+        ),
+      )
+    }
+    const result = await withDaemon<{ items: CollectionSummary[]; total: number }>(
+      type === 'album' ? 'search.albums' : 'search.artists',
+      { keywords, limit: Number(options.limit) },
+    )
+    return output(result, () =>
+      result.items.forEach((item, index) =>
+        console.log(
+          `${index + 1}. ${item.name}${item.subtitle ? ` — ${item.subtitle}` : ''} [${item.id}]`,
+        ),
+      ),
     )
   })
 
@@ -170,6 +207,10 @@ queue.command('list').action(async () => {
 queue
   .command('add <id>')
   .action(async (id) => output(await withDaemon('queue.add', { id: Number(id) })))
+queue
+  .command('next <id>')
+  .description('将歌曲设为下一首播放')
+  .action(async (id) => output(await withDaemon('queue.next', { id: Number(id) })))
 queue
   .command('remove <index>')
   .action(async (index) => output(await withDaemon('queue.remove', { index: Number(index) })))
@@ -265,6 +306,48 @@ library
       await withDaemon(options.play ? 'library.playlist.play' : 'library.playlist', {
         id: Number(id),
         index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('playlist-subscribe <id>')
+  .description('收藏或取消收藏网易云歌单')
+  .option('--remove', '取消收藏')
+  .action(async (id, options) =>
+    output(
+      await withDaemon('library.playlist.subscribe', {
+        id: Number(id),
+        subscribed: !options.remove,
+      }),
+    ),
+  )
+library
+  .command('playlist-create <name>')
+  .description('创建网易云歌单')
+  .option('--private', '创建隐私歌单')
+  .action(async (name, options) =>
+    output(await withDaemon('library.playlist.create', { name, private: options.private })),
+  )
+library
+  .command('playlist-rename <id> <name>')
+  .description('重命名自建歌单')
+  .action(async (id, name) =>
+    output(await withDaemon('library.playlist.rename', { id: Number(id), name })),
+  )
+library
+  .command('playlist-delete <id>')
+  .description('删除自建歌单')
+  .action(async (id) => output(await withDaemon('library.playlist.delete', { id: Number(id) })))
+library
+  .command('playlist-tracks <id> <trackIds...>')
+  .description('向自建歌单添加歌曲，或通过 --remove 移除歌曲')
+  .option('--remove', '从歌单移除歌曲')
+  .action(async (id, trackIds, options) =>
+    output(
+      await withDaemon('library.playlist.tracks', {
+        id: Number(id),
+        trackIds: trackIds.map(Number),
+        operation: options.remove ? 'del' : 'add',
       }),
     ),
   )
@@ -372,6 +455,27 @@ program
     output(await withDaemon('like', { id: Number(id), liked: !options.remove })),
   )
 
+program
+  .command('comments [id]')
+  .description('查看当前歌曲或指定歌曲的评论')
+  .option('-l, --limit <number>', '返回数量', '20')
+  .option('-o, --offset <number>', '偏移量', '0')
+  .action(async (id, options) => {
+    const result = await withDaemon<CommentPage>('comments.song', {
+      ...(id === undefined ? {} : { id: Number(id) }),
+      limit: Number(options.limit),
+      offset: Number(options.offset),
+    })
+    output(result, () => {
+      const rows = result.hotComments.length ? result.hotComments : result.comments
+      for (const comment of rows) {
+        console.log(`${comment.user.nickname} · ♡ ${comment.likedCount}`)
+        console.log(comment.content)
+        console.log('')
+      }
+    })
+  })
+
 const scrobble = program.command('scrobble').description('管理网易云听歌上报')
 scrobble.command('status').action(async () => {
   const config = await withDaemon<any>('config.get')
@@ -450,7 +554,13 @@ const main = async () => {
   if (process.argv.length === 2) {
     await ensureDaemon()
     if (!process.stdout.isTTY) return output(await requestDaemon<PlaybackStatus>('status'))
-    render(React.createElement(NowPlaying))
+    process.stdout.write('\u001b[?1049h\u001b[2J\u001b[3J\u001b[H\u001b[?25l')
+    try {
+      const app = render(React.createElement(NowPlaying), { exitOnCtrlC: true })
+      await app.waitUntilExit()
+    } finally {
+      process.stdout.write('\u001b[?25h\u001b[?1049l')
+    }
     return
   }
   await program.parseAsync(process.argv)

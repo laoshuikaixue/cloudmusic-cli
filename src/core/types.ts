@@ -77,6 +77,26 @@ export interface PlaylistSummary {
   specialType?: number
 }
 
+export interface MusicComment {
+  id: number
+  content: string
+  time: number
+  likedCount: number
+  liked: boolean
+  user: {
+    id: number
+    nickname: string
+    avatar?: string
+  }
+}
+
+export interface CommentPage {
+  comments: MusicComment[]
+  hotComments: MusicComment[]
+  total: number
+  more: boolean
+}
+
 export interface QueueContext {
   type: QueueContextType
   id?: number
