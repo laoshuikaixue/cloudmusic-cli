@@ -96,10 +96,11 @@ const startDaemon = async () => {
   } catch {
     spawnDaemon()
     let lastError: unknown
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await delay(100)
+    const deadline = Date.now() + 45_000
+    while (Date.now() < deadline) {
+      await delay(150)
       try {
-        return await requestDaemon('ping', undefined, 1000)
+        return await requestDaemon('ping', undefined, 1500)
       } catch (error) {
         lastError = error
       }

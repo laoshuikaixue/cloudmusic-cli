@@ -362,6 +362,24 @@ export class PlayerDaemon {
     return this.replaceQueue(cloud.songs, index, { type: 'cloud', name: '音乐云盘' })
   }
 
+  async playAlbum(id: number, index = 0) {
+    const result = await this.api.albumSongs(id)
+    return this.replaceQueue(result.songs, index, {
+      type: 'album',
+      id,
+      name: result.collection.name,
+    })
+  }
+
+  async playArtist(id: number, index = 0) {
+    const result = await this.api.artistSongs(id)
+    return this.replaceQueue(result.songs, index, {
+      type: 'artist',
+      id,
+      name: result.collection.name,
+    })
+  }
+
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
     const lyricIndex = findLyricIndex(this.lyrics, position)
@@ -621,6 +639,24 @@ export class PlayerDaemon {
         return this.api.cloudSongs()
       case 'library.cloud.play':
         return this.playCloud(params.index === undefined ? 0 : numberParam(params.index, 'index'))
+      case 'library.albums':
+        return this.api.subscribedAlbums()
+      case 'library.album':
+        return this.api.albumSongs(numberParam(params.id, 'id'))
+      case 'library.album.play':
+        return this.playAlbum(
+          numberParam(params.id, 'id'),
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
+      case 'library.artists':
+        return this.api.subscribedArtists()
+      case 'library.artist':
+        return this.api.artistSongs(numberParam(params.id, 'id'))
+      case 'library.artist.play':
+        return this.playArtist(
+          numberParam(params.id, 'id'),
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
       case 'like': {
         const id = numberParam(params.id, 'id')
         const liked = params.liked !== false

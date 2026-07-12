@@ -4,6 +4,8 @@ import { mergeLyrics } from '../core/lyrics.js'
 import type {
   AppConfig,
   CloudLibrary,
+  CollectionSummary,
+  ListeningRecordEntry,
   LyricLine,
   PlaylistSummary,
   QueueContext,
@@ -338,6 +340,108 @@ export class NeteaseApi {
       if (!result?.hasMore || page.length < limit) break
     }
     return { songs, count: Math.max(count, songs.length), size, maxSize }
+  }
+
+  async subscribedAlbums(): Promise<CollectionSummary[]> {
+    const albums: CollectionSummary[] = []
+    const limit = 100
+    for (let offset = 0; ; offset += limit) {
+      const result = await this.call<any>('album_sublist', { limit, offset, timestamp: Date.now() })
+      const page = (result?.data || []).map((album: any) => ({
+        id: Number(album?.id),
+        name: String(album?.name || '未知专辑'),
+        type: 'album' as const,
+        cover: album?.picUrl,
+        subtitle: (album?.artists || []).map((artist: any) => artist?.name).filter(Boolean).join(' / '),
+        count: Number(album?.size || 0),
+      }))
+      albums.push(...page)
+      if (!result?.hasMore || page.length < limit) break
+    }
+    return albums
+  }
+
+  async albumSongs(id: number) {
+    const result = await this.call<any>('album', { id, timestamp: Date.now() })
+    const album = result?.album
+    return {
+      collection: {
+        id,
+        name: String(album?.name || '未知专辑'),
+        type: 'album' as const,
+        cover: album?.picUrl,
+        subtitle: (album?.artists || []).map((artist: any) => artist?.name).filter(Boolean).join(' / '),
+        count: Number(result?.songs?.length || album?.size || 0),
+      },
+      songs: (result?.songs || []).map(normalizeSong),
+    }
+  }
+
+  async subscribedArtists(): Promise<CollectionSummary[]> {
+    const artists: CollectionSummary[] = []
+    const limit = 100
+    for (let offset = 0; ; offset += limit) {
+      const result = await this.call<any>('artist_sublist', { limit, offset, timestamp: Date.now() })
+      const page = (result?.data || []).map((artist: any) => ({
+        id: Number(artist?.id),
+        name: String(artist?.name || '未知歌手'),
+        type: 'artist' as const,
+        cover: artist?.picUrl || artist?.img1v1Url,
+        subtitle: artist?.alias?.length ? artist.alias.join(' / ') : undefined,
+        count: Number(artist?.musicSize || 0),
+      }))
+      artists.push(...page)
+      if (!result?.hasMore || page.length < limit) break
+    }
+    return artists
+  }
+
+  async artistSongs(id: number) {
+    const songs: Song[] = []
+    const limit = 100
+    const detail = await this.call<any>('artist_detail', { id, timestamp: Date.now() }).catch(
+      () => undefined,
+    )
+    let artist: any = detail?.data?.artist || detail?.artist
+    for (let offset = 0; ; offset += limit) {
+      const result = await this.call<any>('artist_songs', {
+        id,
+        limit,
+        offset,
+        order: 'hot',
+        timestamp: Date.now(),
+      })
+      artist ||= result?.artist
+      const page = (result?.songs || []).map(normalizeSong)
+      songs.push(...page)
+      if (!result?.more || page.length < limit) break
+    }
+    return {
+      collection: {
+        id,
+        name: String(artist?.name || '未知歌手'),
+        type: 'artist' as const,
+        cover: artist?.picUrl || artist?.img1v1Url,
+        subtitle: artist?.alias?.length ? artist.alias.join(' / ') : undefined,
+        count: songs.length,
+      },
+      songs,
+    }
+  }
+
+  async listeningRecord(range: 'week' | 'all'): Promise<ListeningRecordEntry[]> {
+    const uid = await this.currentUserId()
+    const result = await this.call<any>('user_record', {
+      uid,
+      type: range === 'week' ? 1 : 0,
+      timestamp: Date.now(),
+    })
+    const rows = range === 'week' ? result?.weekData || [] : result?.allData || []
+    return rows.map((item: any) => ({
+      song: normalizeSong(item?.song),
+      playCount: Number(item?.playCount || 0),
+      score: Number(item?.score || 0),
+    }))
   }
 
   like(id: number, liked: boolean) {

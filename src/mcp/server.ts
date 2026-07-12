@@ -139,6 +139,42 @@ const tools = [
     },
   },
   {
+    name: 'get_subscribed_albums',
+    description: '获取登录账号收藏的网易云专辑。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'play_album',
+    description: '获取或播放指定网易云专辑。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        index: { type: 'number', default: 0 },
+        play: { type: 'boolean', default: true },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'get_followed_artists',
+    description: '获取登录账号关注的网易云歌手。',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'play_artist_songs',
+    description: '获取或播放指定网易云歌手的热门歌曲。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        index: { type: 'number', default: 0 },
+        play: { type: 'boolean', default: true },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'set_playback_mode',
     description: '设置顺序、单曲循环或随机播放模式。',
     inputSchema: {
@@ -228,6 +264,14 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.cloud')
     case 'play_cloud_music':
       return request('library.cloud.play', args)
+    case 'get_subscribed_albums':
+      return request('library.albums')
+    case 'play_album':
+      return request(args.play === false ? 'library.album' : 'library.album.play', args)
+    case 'get_followed_artists':
+      return request('library.artists')
+    case 'play_artist_songs':
+      return request(args.play === false ? 'library.artist' : 'library.artist.play', args)
     case 'set_playback_mode':
       return request('mode.set', args)
     case 'configure_player': {

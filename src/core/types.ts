@@ -1,7 +1,17 @@
 export type PlaybackSource = 'official' | 'unblock' | 'trial' | 'local' | null
 export type PlaybackMode = 'sequence' | 'repeat-one' | 'shuffle'
 export type QueueContextType =
-  'manual' | 'search' | 'playlist' | 'daily' | 'fm' | 'liked' | 'history' | 'cloud'
+  | 'manual'
+  | 'search'
+  | 'playlist'
+  | 'daily'
+  | 'fm'
+  | 'liked'
+  | 'history'
+  | 'cloud'
+  | 'album'
+  | 'artist'
+  | 'record'
 export type ScrobbleMode = 'ncbl' | 'legacy'
 
 export interface Artist {
@@ -38,6 +48,21 @@ export interface CloudLibrary {
   count: number
   size: number
   maxSize: number
+}
+
+export interface CollectionSummary {
+  id: number
+  name: string
+  type: 'album' | 'artist'
+  cover?: string
+  subtitle?: string
+  count?: number
+}
+
+export interface ListeningRecordEntry {
+  song: Song
+  playCount: number
+  score: number
 }
 
 export interface PlaylistSummary {

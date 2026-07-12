@@ -314,6 +314,32 @@ library
       }),
     ),
   )
+library.command('albums').action(async () => output(await withDaemon('library.albums')))
+library
+  .command('album <id>')
+  .option('--play', '播放整张专辑')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (id, options) =>
+    output(
+      await withDaemon(options.play ? 'library.album.play' : 'library.album', {
+        id: Number(id),
+        index: Number(options.index),
+      }),
+    ),
+  )
+library.command('artists').action(async () => output(await withDaemon('library.artists')))
+library
+  .command('artist <id>')
+  .option('--play', '播放该歌手全部热门歌曲')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (id, options) =>
+    output(
+      await withDaemon(options.play ? 'library.artist.play' : 'library.artist', {
+        id: Number(id),
+        index: Number(options.index),
+      }),
+    ),
+  )
 
 program
   .command('like <id>')

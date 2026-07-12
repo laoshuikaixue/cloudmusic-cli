@@ -5,6 +5,7 @@ import { requestDaemonResilient } from '../ipc/client.js'
 import type {
   AppConfig,
   CloudLibrary,
+  CollectionSummary,
   HistoryEntry,
   PlaybackMode,
   PlaybackStatus,
@@ -25,12 +26,15 @@ type PageMode =
   | 'playlists'
   | 'tracks'
   | 'settings'
+  | 'collections'
 
 type LibrarySource =
   | { type: 'playlist'; id: number; name: string }
   | { type: 'daily'; name: string }
   | { type: 'history'; name: string }
   | { type: 'cloud'; name: string }
+  | { type: 'album'; id: number; name: string }
+  | { type: 'artist'; id: number; name: string }
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
   return requestDaemonResilient<T>(method, params)
@@ -100,6 +104,8 @@ export const NowPlaying = () => {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queueIndex, setQueueIndex] = useState(0)
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
+  const [collections, setCollections] = useState<CollectionSummary[]>([])
+  const [collectionType, setCollectionType] = useState<'album' | 'artist'>('album')
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [libraryIndex, setLibraryIndex] = useState(0)
   const [librarySource, setLibrarySource] = useState<LibrarySource | null>(null)
@@ -276,6 +282,39 @@ export const NowPlaying = () => {
     }
   }
 
+  const openCollections = async (type: 'album' | 'artist') => {
+    setMessage(type === 'album' ? '正在加载收藏专辑…' : '正在加载关注歌手…')
+    try {
+      const items = await callDaemon<CollectionSummary[]>(
+        type === 'album' ? 'library.albums' : 'library.artists',
+      )
+      setCollections(items)
+      setCollectionType(type)
+      setLibraryIndex(0)
+      setMode('collections')
+      setMessage(`${type === 'album' ? '收藏专辑' : '关注歌手'} · ${items.length} 项`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openCollection = async (collection: CollectionSummary) => {
+    setMessage(`正在加载：${collection.name}…`)
+    try {
+      const result = await callDaemon<{ collection: CollectionSummary; songs: Song[] }>(
+        collection.type === 'album' ? 'library.album' : 'library.artist',
+        { id: collection.id },
+      )
+      setLibrarySongs(result.songs)
+      setLibrarySource({ type: collection.type, id: collection.id, name: collection.name })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`${collection.name} · ${result.songs.length} 首歌曲`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const playLibrary = async (index: number) => {
     if (!librarySource || !librarySongs[index]) return
     setMessage(`正在加载：${songLabel(librarySongs[index])}`)
@@ -288,6 +327,10 @@ export const NowPlaying = () => {
         await callDaemon('library.history.play', { index })
       } else if (librarySource.type === 'cloud') {
         await callDaemon('library.cloud.play', { index })
+      } else if (librarySource.type === 'album') {
+        await callDaemon('library.album.play', { id: librarySource.id, index })
+      } else if (librarySource.type === 'artist') {
+        await callDaemon('library.artist.play', { id: librarySource.id, index })
       }
       await refreshQueue()
       setMode('normal')
@@ -472,13 +515,15 @@ export const NowPlaying = () => {
     if (mode === 'library') {
       if (key.escape || input === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(4, index + 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(6, index + 1))
       if (key.return) {
         if (libraryIndex === 0) void openPlaylists()
         if (libraryIndex === 1) void openDaily()
         if (libraryIndex === 2) void playFm()
         if (libraryIndex === 3) void openHistory()
         if (libraryIndex === 4) void openCloud()
+        if (libraryIndex === 5) void openCollections('album')
+        if (libraryIndex === 6) void openCollections('artist')
       }
       return
     }
@@ -492,8 +537,23 @@ export const NowPlaying = () => {
       return
     }
 
+    if (mode === 'collections') {
+      if (key.escape) return setMode('library')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow)
+        return setLibraryIndex((index) => Math.min(collections.length - 1, index + 1))
+      if (key.return && collections[libraryIndex]) void openCollection(collections[libraryIndex])
+      return
+    }
+
     if (mode === 'tracks') {
-      if (key.escape) return setMode(librarySource?.type === 'playlist' ? 'playlists' : 'library')
+      if (key.escape) {
+        if (librarySource?.type === 'playlist') return setMode('playlists')
+        if (librarySource?.type === 'album' || librarySource?.type === 'artist') {
+          return setMode('collections')
+        }
+        return setMode('library')
+      }
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
       if (key.downArrow)
         return setLibraryIndex((index) => Math.min(librarySongs.length - 1, index + 1))
@@ -580,6 +640,8 @@ export const NowPlaying = () => {
   const visibleQueue = queue.songs.slice(queueStart, queueStart + 8)
   const playlistStart = Math.max(0, Math.min(libraryIndex - 3, playlists.length - 8))
   const visiblePlaylists = playlists.slice(playlistStart, playlistStart + 8)
+  const collectionStart = Math.max(0, Math.min(libraryIndex - 3, collections.length - 8))
+  const visibleCollections = collections.slice(collectionStart, collectionStart + 8)
   const trackStart = Math.max(0, Math.min(libraryIndex - 3, librarySongs.length - 8))
   const visibleTracks = librarySongs.slice(trackStart, trackStart + 8)
   const shownInput = inputValue.slice(-Math.max(12, terminalWidth - 18))
@@ -654,7 +716,15 @@ export const NowPlaying = () => {
       {mode === 'library' ? (
         <>
           <Text bold>音乐库（↑/↓ 选择，Enter 打开，l/Esc 返回）</Text>
-          {['我的歌单', '每日推荐', '私人 FM', '最近播放', '音乐云盘'].map((label, index) => (
+          {[
+            '我的歌单',
+            '每日推荐',
+            '私人 FM',
+            '最近播放',
+            '音乐云盘',
+            '收藏专辑',
+            '关注歌手',
+          ].map((label, index) => (
             <Text key={label} color={index === libraryIndex ? 'cyan' : undefined}>
               {index === libraryIndex ? '▶ ' : '  '}
               {label}
@@ -671,6 +741,27 @@ export const NowPlaying = () => {
               <Text key={playlist.id} color={index === libraryIndex ? 'cyan' : undefined}>
                 {index === libraryIndex ? '▶ ' : '  '}
                 {playlist.name} · {playlist.trackCount} 首
+              </Text>
+            )
+          })}
+        </>
+      ) : null}
+      {mode === 'collections' ? (
+        <>
+          <Text bold>
+            {collectionType === 'album' ? '收藏专辑' : '关注歌手'}（↑/↓ 选择，Enter 查看，Esc 返回）
+          </Text>
+          {visibleCollections.map((collection, offset) => {
+            const index = collectionStart + offset
+            return (
+              <Text
+                key={`${collection.type}-${collection.id}`}
+                color={index === libraryIndex ? 'cyan' : undefined}
+              >
+                {index === libraryIndex ? '▶ ' : '  '}
+                {collection.name}
+                {collection.subtitle ? ` — ${collection.subtitle}` : ''}
+                {collection.count ? ` · ${collection.count} 首` : ''}
               </Text>
             )
           })}
