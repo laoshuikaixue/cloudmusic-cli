@@ -340,6 +340,19 @@ library
       }),
     ),
   )
+library
+  .command('record')
+  .option('--week', '查看最近一周排行')
+  .option('--play', '播放听歌排行')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (options) =>
+    output(
+      await withDaemon(options.play ? 'library.record.play' : 'library.record', {
+        range: options.week ? 'week' : 'all',
+        index: Number(options.index),
+      }),
+    ),
+  )
 
 program
   .command('like <id>')

@@ -352,7 +352,10 @@ export class NeteaseApi {
         name: String(album?.name || '未知专辑'),
         type: 'album' as const,
         cover: album?.picUrl,
-        subtitle: (album?.artists || []).map((artist: any) => artist?.name).filter(Boolean).join(' / '),
+        subtitle: (album?.artists || [])
+          .map((artist: any) => artist?.name)
+          .filter(Boolean)
+          .join(' / '),
         count: Number(album?.size || 0),
       }))
       albums.push(...page)
@@ -370,7 +373,10 @@ export class NeteaseApi {
         name: String(album?.name || '未知专辑'),
         type: 'album' as const,
         cover: album?.picUrl,
-        subtitle: (album?.artists || []).map((artist: any) => artist?.name).filter(Boolean).join(' / '),
+        subtitle: (album?.artists || [])
+          .map((artist: any) => artist?.name)
+          .filter(Boolean)
+          .join(' / '),
         count: Number(result?.songs?.length || album?.size || 0),
       },
       songs: (result?.songs || []).map(normalizeSong),
@@ -381,7 +387,11 @@ export class NeteaseApi {
     const artists: CollectionSummary[] = []
     const limit = 100
     for (let offset = 0; ; offset += limit) {
-      const result = await this.call<any>('artist_sublist', { limit, offset, timestamp: Date.now() })
+      const result = await this.call<any>('artist_sublist', {
+        limit,
+        offset,
+        timestamp: Date.now(),
+      })
       const page = (result?.data || []).map((artist: any) => ({
         id: Number(artist?.id),
         name: String(artist?.name || '未知歌手'),

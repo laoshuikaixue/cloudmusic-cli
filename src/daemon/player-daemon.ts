@@ -380,6 +380,15 @@ export class PlayerDaemon {
     })
   }
 
+  async playListeningRecord(range: 'week' | 'all', index = 0) {
+    const entries = await this.api.listeningRecord(range)
+    return this.replaceQueue(
+      entries.map((entry) => entry.song),
+      index,
+      { type: 'record', name: range === 'week' ? '本周听歌排行' : '全部听歌排行' },
+    )
+  }
+
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
     const lyricIndex = findLyricIndex(this.lyrics, position)
@@ -657,6 +666,17 @@ export class PlayerDaemon {
           numberParam(params.id, 'id'),
           params.index === undefined ? 0 : numberParam(params.index, 'index'),
         )
+      case 'library.record': {
+        const range = params.range === 'week' ? 'week' : 'all'
+        return this.api.listeningRecord(range)
+      }
+      case 'library.record.play': {
+        const range = params.range === 'week' ? 'week' : 'all'
+        return this.playListeningRecord(
+          range,
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
+      }
       case 'like': {
         const id = numberParam(params.id, 'id')
         const liked = params.liked !== false

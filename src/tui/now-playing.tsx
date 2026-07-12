@@ -7,6 +7,7 @@ import type {
   CloudLibrary,
   CollectionSummary,
   HistoryEntry,
+  ListeningRecordEntry,
   PlaybackMode,
   PlaybackStatus,
   PlaylistSummary,
@@ -35,6 +36,7 @@ type LibrarySource =
   | { type: 'cloud'; name: string }
   | { type: 'album'; id: number; name: string }
   | { type: 'artist'; id: number; name: string }
+  | { type: 'record'; range: 'week' | 'all'; name: string }
 
 const callDaemon = async <T = unknown,>(method: string, params?: Record<string, unknown>) => {
   return requestDaemonResilient<T>(method, params)
@@ -298,6 +300,21 @@ export const NowPlaying = () => {
     }
   }
 
+  const openListeningRecord = async (range: 'week' | 'all') => {
+    const name = range === 'week' ? '本周听歌排行' : '全部听歌排行'
+    setMessage(`正在加载${name}…`)
+    try {
+      const entries = await callDaemon<ListeningRecordEntry[]>('library.record', { range })
+      setLibrarySongs(entries.map((entry) => entry.song))
+      setLibrarySource({ type: 'record', range, name })
+      setLibraryIndex(0)
+      setMode('tracks')
+      setMessage(`${name} · ${entries.length} 首`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const openCollection = async (collection: CollectionSummary) => {
     setMessage(`正在加载：${collection.name}…`)
     try {
@@ -331,6 +348,8 @@ export const NowPlaying = () => {
         await callDaemon('library.album.play', { id: librarySource.id, index })
       } else if (librarySource.type === 'artist') {
         await callDaemon('library.artist.play', { id: librarySource.id, index })
+      } else if (librarySource.type === 'record') {
+        await callDaemon('library.record.play', { range: librarySource.range, index })
       }
       await refreshQueue()
       setMode('normal')
@@ -515,7 +534,7 @@ export const NowPlaying = () => {
     if (mode === 'library') {
       if (key.escape || input === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(6, index + 1))
+      if (key.downArrow) return setLibraryIndex((index) => Math.min(8, index + 1))
       if (key.return) {
         if (libraryIndex === 0) void openPlaylists()
         if (libraryIndex === 1) void openDaily()
@@ -524,6 +543,8 @@ export const NowPlaying = () => {
         if (libraryIndex === 4) void openCloud()
         if (libraryIndex === 5) void openCollections('album')
         if (libraryIndex === 6) void openCollections('artist')
+        if (libraryIndex === 7) void openListeningRecord('week')
+        if (libraryIndex === 8) void openListeningRecord('all')
       }
       return
     }
@@ -724,6 +745,8 @@ export const NowPlaying = () => {
             '音乐云盘',
             '收藏专辑',
             '关注歌手',
+            '本周听歌排行',
+            '全部听歌排行',
           ].map((label, index) => (
             <Text key={label} color={index === libraryIndex ? 'cyan' : undefined}>
               {index === libraryIndex ? '▶ ' : '  '}

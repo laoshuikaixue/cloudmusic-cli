@@ -175,6 +175,25 @@ const tools = [
     },
   },
   {
+    name: 'get_listening_record',
+    description: '获取网易云账号本周或全部时间的听歌排行。',
+    inputSchema: {
+      type: 'object',
+      properties: { range: { type: 'string', enum: ['week', 'all'], default: 'all' } },
+    },
+  },
+  {
+    name: 'play_listening_record',
+    description: '将网易云听歌排行作为播放队列。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        range: { type: 'string', enum: ['week', 'all'], default: 'all' },
+        index: { type: 'number', default: 0 },
+      },
+    },
+  },
+  {
     name: 'set_playback_mode',
     description: '设置顺序、单曲循环或随机播放模式。',
     inputSchema: {
@@ -272,6 +291,10 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.artists')
     case 'play_artist_songs':
       return request(args.play === false ? 'library.artist' : 'library.artist.play', args)
+    case 'get_listening_record':
+      return request('library.record', args)
+    case 'play_listening_record':
+      return request('library.record.play', args)
     case 'set_playback_mode':
       return request('mode.set', args)
     case 'configure_player': {
