@@ -1,0 +1,57 @@
+{
+  "name": "cloudmusic-cli",
+  "version": "0.1.0",
+  "description": "A terminal-first NetEase Cloud Music player with spectrum visualization and AI tool support.",
+  "type": "module",
+  "bin": {
+    "ncm": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "pnpm build:js && pnpm build:native",
+    "build:js": "tsup src/cli.ts --format esm --platform node --target node20 --sourcemap",
+    "build:native": "node scripts/build-native.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src test --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.29.3",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "@neteasecloudmusicapienhanced/api": "4.36.1",
+    "commander": "^14.0.0",
+    "env-paths": "^3.0.0",
+    "ink": "^6.3.1",
+    "qrcode-terminal": "^0.12.0",
+    "react": "^19.1.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^22.18.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/react": "^19.1.16",
+    "eslint": "^9.39.0",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.6",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.4"
+  }
+}

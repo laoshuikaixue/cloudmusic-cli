@@ -1,0 +1,14 @@
+CloudMusic CLI
+Copyright (C) 2026 CloudMusic CLI contributors
+
+This project uses @neteasecloudmusicapienhanced/api, licensed under the MIT License:
+https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced
+
+The playback flow, source fallback behavior, queue semantics, and spectrum presentation were
+designed with reference to SPlayer, licensed under the GNU Affero General Public License v3.0:
+https://github.com/SPlayer-Dev/SPlayer
+
+The Windows SMTC bridge adapts the MediaPlayer/SystemMediaTransportControls approach from
+SPlayer's native/external-media-integration module under the same AGPL-3.0 license.
+
+Any source code adapted from SPlayer must retain its copyright and license notices.

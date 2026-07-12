@@ -1,0 +1,19 @@
+[package]
+name = "cloudmusic-smtc"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+  "Foundation",
+  "Media",
+  "Media_Playback",
+  "Storage",
+  "Storage_Streams",
+]
