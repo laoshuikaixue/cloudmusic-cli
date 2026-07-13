@@ -1,6 +1,6 @@
 {
   "name": "@laoshuikaixue/cloudmusic-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A terminal-first NetEase Cloud Music player with spectrum visualization and AI tool support.",
   "keywords": [
     "netease-cloud-music",
@@ -30,7 +30,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "pnpm build:js && pnpm build:native",
-    "build:js": "tsup src/cli.ts --format esm --platform node --target node22 --sourcemap",
+    "build:js": "node scripts/clean-dist-js.mjs && tsup src/cli.ts --format esm --platform node --target node22 --sourcemap",
     "build:native": "node scripts/build-native.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
