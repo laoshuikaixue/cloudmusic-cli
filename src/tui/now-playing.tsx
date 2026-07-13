@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
+import { getPlayerLayout } from './layout.js'
 import { interpolateWordGraphemes, mixHexColors } from './lyric-highlight.js'
 import type {
   AppConfig,
@@ -178,7 +179,7 @@ const songLabel = (song: Song) => {
 
 const Spectrum = ({ frame, width }: { frame: SpectrumFrame; width: number }) => {
   const characters = ' ▁▂▃▄▅▆▇█'
-  const usableWidth = Math.max(12, Math.min(96, width - 4))
+  const usableWidth = Math.max(12, width)
   const bars = useMemo(() => {
     const values: number[] = []
     for (let index = 0; index < usableWidth; index += 1) {
@@ -239,6 +240,7 @@ export const NowPlaying = () => {
   const [commentReturnMode, setCommentReturnMode] = useState<PageMode>('normal')
   const [message, setMessage] = useState('按 / 搜索歌曲，按 o 打开设置')
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
+  const [terminalHeight, setTerminalHeight] = useState(process.stdout.rows || 24)
   const [lyricVisualPosition, setLyricVisualPosition] = useState(0)
   const qrTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const deleteTimer = useRef<NodeJS.Timeout | undefined>(undefined)
@@ -367,7 +369,10 @@ export const NowPlaying = () => {
   }
 
   useEffect(() => {
-    const resize = () => setTerminalWidth(process.stdout.columns || 80)
+    const resize = () => {
+      setTerminalWidth(process.stdout.columns || 80)
+      setTerminalHeight(process.stdout.rows || 24)
+    }
     process.stdout.on('resize', resize)
     void verifyAccount()
     void refreshQueue()
@@ -1445,7 +1450,8 @@ export const NowPlaying = () => {
   })
 
   const artists = status.song?.artists.map((artist) => artist.name).join(' / ') || '—'
-  const progressWidth = Math.max(10, Math.min(60, terminalWidth - 28))
+  const playerLayout = getPlayerLayout(terminalWidth, terminalHeight)
+  const progressWidth = playerLayout.progressWidth
   const progress = status.duration ? Math.max(0, Math.min(1, status.position / status.duration)) : 0
   const filled = Math.round(progress * progressWidth)
   const progressFilled = '━'.repeat(filled)
@@ -1844,7 +1850,7 @@ export const NowPlaying = () => {
   )
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingTop={1}>
+    <Box flexDirection="column" paddingX={1} paddingTop={1} height={playerLayout.height}>
       <Box justifyContent="space-between">
         <Text bold color={process.env.NO_COLOR ? undefined : 'red'}>
           ◆ CLOUDMUSIC <Text dimColor>TERMINAL PLAYER</Text>
@@ -1882,51 +1888,63 @@ export const NowPlaying = () => {
         </Text>
       </Box>
 
-      <Box marginTop={1} paddingX={2} flexDirection="column">
-        <Text dimColor>
-          LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()} ·{' '}
-          {status.lyricSource === 'amll'
-            ? 'AMLL'
-            : status.lyricSource === 'qqmusic'
-              ? 'QQ MUSIC'
-              : 'NETEASE'}
-          {status.lyricsUpgraded ? ' · UPGRADED' : ''}
-        </Text>
-        <TimedLyricLine line={status.currentLyricLine} position={lyricVisualPosition} />
-        {status.currentLyricLine?.translation ? (
+      <Box
+        flexDirection="column"
+        flexGrow={playerLayout.expanded ? 1 : 0}
+        justifyContent={playerLayout.expanded ? 'center' : 'flex-start'}
+        gap={playerLayout.mainGap}
+      >
+        <Box marginTop={playerLayout.expanded ? 0 : 1} paddingX={2} flexDirection="column">
+          <Text dimColor>
+            LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()} ·{' '}
+            {status.lyricSource === 'amll'
+              ? 'AMLL'
+              : status.lyricSource === 'qqmusic'
+                ? 'QQ MUSIC'
+                : 'NETEASE'}
+            {status.lyricsUpgraded ? ' · UPGRADED' : ''}
+          </Text>
+          <TimedLyricLine line={status.currentLyricLine} position={lyricVisualPosition} />
+          {status.currentLyricLine?.translation ? (
+            <Box
+              width="100%"
+              justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
+            >
+              <Text color="yellow">{status.currentLyricLine.translation}</Text>
+            </Box>
+          ) : null}
+          {status.backgroundLyricLines?.slice(0, 1).map((line) => (
+            <TimedLyricLine
+              key={`${line.time}-${line.text}`}
+              line={line}
+              position={lyricVisualPosition}
+            />
+          ))}
           <Box
             width="100%"
-            justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
+            justifyContent={status.nextLyricLine?.isDuet ? 'flex-end' : 'flex-start'}
           >
-            <Text color="yellow">{status.currentLyricLine.translation}</Text>
+            <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
           </Box>
-        ) : null}
-        {status.backgroundLyricLines?.slice(0, 1).map((line) => (
-          <TimedLyricLine
-            key={`${line.time}-${line.text}`}
-            line={line}
-            position={lyricVisualPosition}
-          />
-        ))}
-        <Box width="100%" justifyContent={status.nextLyricLine?.isDuet ? 'flex-end' : 'flex-start'}>
-          <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
+        </Box>
+
+        <Box marginTop={playerLayout.expanded ? 0 : 1} paddingX={2} flexDirection="column">
+          <Box justifyContent="space-between">
+            <Text dimColor>SPECTRUM</Text>
+            <Text dimColor>48 kHz · PCM</Text>
+          </Box>
+          <Spectrum frame={spectrum} width={playerLayout.spectrumWidth} />
         </Box>
       </Box>
 
-      <Box marginTop={1} paddingX={2} flexDirection="column">
-        <Box justifyContent="space-between">
-          <Text dimColor>SPECTRUM</Text>
-          <Text dimColor>48 kHz · PCM</Text>
+      <Box flexDirection="column" flexShrink={0}>
+        {interactionPanel}
+        <Box justifyContent="space-between" paddingX={1}>
+          <Text color={status.error ? 'red' : 'yellow'}>
+            {status.error ? `! ${status.error}` : `› ${message}`}
+          </Text>
+          <Text dimColor>Q 退出界面 · X 彻底退出并关闭播放</Text>
         </Box>
-        <Spectrum frame={spectrum} width={terminalWidth} />
-      </Box>
-
-      {interactionPanel}
-      <Box justifyContent="space-between" paddingX={1}>
-        <Text color={status.error ? 'red' : 'yellow'}>
-          {status.error ? `! ${status.error}` : `› ${message}`}
-        </Text>
-        <Text dimColor>Q 退出界面 · X 彻底退出并关闭播放</Text>
       </Box>
     </Box>
   )
