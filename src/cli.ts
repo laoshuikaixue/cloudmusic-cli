@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { Command } from 'commander'
-import { ensureDaemon, requestDaemon, subscribeDaemon } from './ipc/client.js'
+import {
+  ensureDaemon,
+  isDaemonConnectionError,
+  requestDaemon,
+  subscribeDaemon,
+} from './ipc/client.js'
 import { toAppError } from './core/errors.js'
 import type {
   CommentPage,
@@ -160,6 +165,18 @@ for (const [name, method] of [
     .description(`${name} 播放控制`)
     .action(async () => output(await withDaemon(method)))
 }
+
+program
+  .command('quit')
+  .description('彻底退出播放器并关闭 daemon、mpv、FFmpeg 和 SMTC')
+  .action(async () => {
+    try {
+      output(await requestDaemon('shutdown'))
+    } catch (error) {
+      if (!isDaemonConnectionError(error)) throw error
+      output({ shuttingDown: false, alreadyStopped: true })
+    }
+  })
 
 program
   .command('status')

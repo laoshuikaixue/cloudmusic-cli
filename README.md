@@ -112,6 +112,7 @@ ncm scrobble status
 ncm scrobble mode ncbl
 ncm smtc status
 ncm comments
+ncm quit
 ```
 
 播放页快捷键：
@@ -131,6 +132,7 @@ ncm comments
 - `r`：查看当前歌曲评论；在歌单歌曲页中查看歌单评论
 - `s`：把当前歌曲或列表选中歌曲加入指定自建歌单
 - `q`：退出播放页，后台播放不会停止
+- `x`：彻底退出播放器，同时关闭 daemon、mpv、FFmpeg 和 SMTC
 
 搜索结果和歌曲列表中可按 `n` 设为下一首、按 `e` 追加到队列。队列页中按 `x` 删除，
 按 `[` / `]` 调整顺序，按 `Shift+C` 清空整个队列。

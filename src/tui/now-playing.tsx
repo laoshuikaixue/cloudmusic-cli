@@ -197,6 +197,7 @@ export const NowPlaying = () => {
   const seekTarget = useRef<number | null>(null)
   const seekTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const seekInFlight = useRef(false)
+  const completeExitInProgress = useRef(false)
 
   const updateStatus = (nextStatus: PlaybackStatus) => {
     statusRef.current = nextStatus
@@ -213,6 +214,18 @@ export const NowPlaying = () => {
       .catch((error) => setMessage(error instanceof Error ? error.message : String(error)))
       .finally(() => {
         controlBusy.current = false
+      })
+  }
+
+  const quitCompletely = () => {
+    if (completeExitInProgress.current) return
+    completeExitInProgress.current = true
+    setMessage('正在关闭播放器、后台服务和媒体进程…')
+    void callDaemon('shutdown')
+      .then(() => exit())
+      .catch((error) => {
+        completeExitInProgress.current = false
+        setMessage(error instanceof Error ? error.message : String(error))
       })
   }
 
@@ -1295,6 +1308,7 @@ export const NowPlaying = () => {
       return
     }
 
+    if (controlInput === 'x') return quitCompletely()
     if (controlInput === 'q' || key.escape) return exit()
     if (input === '/') {
       setInputValue('')
@@ -1798,7 +1812,7 @@ export const NowPlaying = () => {
         <Text color={status.error ? 'red' : 'yellow'}>
           {status.error ? `! ${status.error}` : `› ${message}`}
         </Text>
-        <Text dimColor>Q 退出界面 · 后台继续播放</Text>
+        <Text dimColor>Q 退出界面 · X 彻底退出并关闭播放</Text>
       </Box>
     </Box>
   )
