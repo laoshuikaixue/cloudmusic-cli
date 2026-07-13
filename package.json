@@ -20,6 +20,7 @@
   },
   "type": "module",
   "bin": {
+    "cloudmusic-cli": "dist/cli.js",
     "ncm": "dist/cli.js"
   },
   "files": [
@@ -32,6 +33,7 @@
     "build": "pnpm build:js && pnpm build:native",
     "build:js": "node scripts/clean-dist-js.mjs && tsup src/cli.ts --format esm --platform node --target node22 --sourcemap",
     "build:native": "node scripts/build-native.mjs",
+    "prepack": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

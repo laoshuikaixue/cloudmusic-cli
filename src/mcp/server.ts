@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { ensureDaemon, requestDaemonResilient } from '../ipc/client.js'
+import { VERSION } from '../version.js'
 import type { AppConfig } from '../core/types.js'
 
 const tools = [
@@ -507,7 +508,7 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
 export const runMcpServer = async () => {
   await ensureDaemon()
   const server = new Server(
-    { name: 'cloudmusic-cli', version: '0.1.0' },
+    { name: 'cloudmusic-cli', version: VERSION },
     { capabilities: { tools: {} } },
   )
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }))

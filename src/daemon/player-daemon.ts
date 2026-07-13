@@ -6,6 +6,7 @@ import { normalizeNeteaseCookie } from '../core/cookie.js'
 import { findActiveBackgroundLyrics, getLyricContext } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
 import { SmtcBridge, type SmtcEvent } from '../system/smtc.js'
+import { VERSION } from '../version.js'
 import type {
   AppConfig,
   HistoryEntry,
@@ -606,7 +607,7 @@ export class PlayerDaemon {
   private async dispatchInternal(method: string, params: Record<string, unknown> = {}) {
     switch (method) {
       case 'ping':
-        return { pid: process.pid, version: '0.1.0' }
+        return { pid: process.pid, version: VERSION }
       case 'status':
         return this.status()
       case 'search':

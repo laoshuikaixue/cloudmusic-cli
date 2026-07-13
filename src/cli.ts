@@ -7,6 +7,7 @@ import {
   subscribeDaemon,
 } from './ipc/client.js'
 import { toAppError } from './core/errors.js'
+import { VERSION } from './version.js'
 import type {
   CommentPage,
   CollectionSummary,
@@ -17,8 +18,6 @@ import type {
   Song,
   SpectrumFrame,
 } from './core/types.js'
-
-const VERSION = '0.1.0'
 
 if (process.argv[2] === '__daemon') {
   const { runDaemonServer } = await import('./ipc/server.js')
