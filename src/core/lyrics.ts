@@ -1,6 +1,8 @@
 import type { LyricLine } from './types.js'
 
 const timePattern = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g
+const yrcLinePattern = /^\[(\d+),(\d+)\](.*)$/
+const yrcWordPattern = /\(\d+,\d+,\d+\)/g
 
 export const parseLrc = (input?: string): LyricLine[] => {
   if (!input) return []
@@ -20,6 +22,19 @@ export const parseLrc = (input?: string): LyricLine[] => {
   return result.sort((a, b) => a.time - b.time)
 }
 
+export const parseYrc = (input?: string): LyricLine[] => {
+  if (!input) return []
+  const result: LyricLine[] = []
+  for (const rawLine of input.replace(/\r/g, '').split('\n')) {
+    const match = rawLine.match(yrcLinePattern)
+    if (!match) continue
+    const time = Number(match[1]) / 1000
+    const text = (match[3] || '').replace(yrcWordPattern, '').trim()
+    if (Number.isFinite(time) && text) result.push({ time, text })
+  }
+  return result.sort((a, b) => a.time - b.time)
+}
+
 const alignText = (
   base: LyricLine[],
   input: string | undefined,
@@ -33,7 +48,8 @@ const alignText = (
 }
 
 export const mergeLyrics = (raw: any): LyricLine[] => {
-  const primary = parseLrc(raw?.yrc?.lyric || raw?.lrc?.lyric)
+  const yrc = parseYrc(raw?.yrc?.lyric)
+  const primary = yrc.length ? yrc : parseLrc(raw?.lrc?.lyric)
   alignText(primary, raw?.tlyric?.lyric, 'translation')
   alignText(primary, raw?.romalrc?.lyric, 'romanization')
   return primary

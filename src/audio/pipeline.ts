@@ -57,6 +57,7 @@ export class AudioPipeline extends EventEmitter {
       '--no-video',
       '--really-quiet',
       '--input-terminal=no',
+      ...(process.platform === 'win32' ? ['--no-media-controls'] : []),
       `--input-ipc-server=${this.socketPath}`,
       '--audio-buffer=0.05',
       `--volume=${options.volume}`,
