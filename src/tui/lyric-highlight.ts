@@ -33,6 +33,9 @@ export const mixHexColors = (from: string, to: string, progress: number) => {
   return `#${channel(0)}${channel(2)}${channel(4)}`
 }
 
+export const getWaitingDots = (timestamp: number, interval = 400) =>
+  '.'.repeat((Math.floor(timestamp / interval) % 3) + 1)
+
 /**
  * 部分歌词源只提供词级时间。这里在该时间片内部按可见 Unicode 字符均分，
  * 生成用于终端明暗渐变的视觉时间；不会修改 daemon 保存的原始歌词时间。

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   easeInOutSine,
+  getWaitingDots,
   interpolateWordGraphemes,
   mixHexColors,
   splitGraphemes,
@@ -35,5 +36,12 @@ describe('lyric character highlight', () => {
     expect(mixHexColors('#000000', '#ffffff', 0.5)).toBe('#808080')
     expect(mixHexColors('#475569', '#22d3ee', 0)).toBe('#475569')
     expect(mixHexColors('#475569', '#22d3ee', 1)).toBe('#22d3ee')
+  })
+
+  it('cycles the classic waiting ellipsis before the first lyric line', () => {
+    expect(getWaitingDots(0)).toBe('.')
+    expect(getWaitingDots(400)).toBe('..')
+    expect(getWaitingDots(800)).toBe('...')
+    expect(getWaitingDots(1200)).toBe('.')
   })
 })

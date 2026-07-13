@@ -224,5 +224,5 @@ pnpm build
 
 - [NeteaseCloudMusicApiEnhanced/api-enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)
 - [SPlayer-Dev/SPlayer](https://github.com/SPlayer-Dev/SPlayer)
-- [SPlayer-Dev/SPlayer-Next](https://github.com/SPlayer-Dev/SPlayer-Next)（QRC 匿名获取、歌词升级与一致性校验思路）
-- [chenmozhijin/LDDC](https://github.com/chenmozhijin/LDDC)（QRC Triple DES 兼容算法，经 SPlayer-Next 适配）
+- [SPlayer-Dev/SPlayer-Next](https://github.com/SPlayer-Dev/SPlayer-Next)
+- [chenmozhijin/LDDC](https://github.com/chenmozhijin/LDDC)（QRC Triple DES 兼容算法）

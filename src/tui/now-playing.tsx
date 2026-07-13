@@ -4,7 +4,7 @@ import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
 import { getPlayerLayout } from './layout.js'
-import { interpolateWordGraphemes, mixHexColors } from './lyric-highlight.js'
+import { getWaitingDots, interpolateWordGraphemes, mixHexColors } from './lyric-highlight.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -125,11 +125,23 @@ const formatTime = (seconds: number) => {
   return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
 }
 
-const TimedLyricLine = ({ line, position }: { line?: LyricLine; position: number }) => {
+const TimedLyricLine = ({
+  line,
+  position,
+  waiting = false,
+  placeholderAlignRight = false,
+}: {
+  line?: LyricLine
+  position: number
+  waiting?: boolean
+  placeholderAlignRight?: boolean
+}) => {
   if (!line) {
     return (
-      <Box width="100%" justifyContent="flex-start">
-        <Text>暂无同步歌词</Text>
+      <Box width="100%" justifyContent={placeholderAlignRight ? 'flex-end' : 'flex-start'}>
+        <Text color={waiting ? 'cyan' : undefined} dimColor>
+          {waiting ? getWaitingDots(Date.now()) : '暂无同步歌词'}
+        </Text>
       </Box>
     )
   }
@@ -1904,7 +1916,12 @@ export const NowPlaying = () => {
                 : 'NETEASE'}
             {status.lyricsUpgraded ? ' · UPGRADED' : ''}
           </Text>
-          <TimedLyricLine line={status.currentLyricLine} position={lyricVisualPosition} />
+          <TimedLyricLine
+            line={status.currentLyricLine}
+            position={lyricVisualPosition}
+            waiting={!status.currentLyricLine && Boolean(status.nextLyricLine)}
+            placeholderAlignRight={Boolean(status.nextLyricLine?.isDuet)}
+          />
           {status.currentLyricLine?.translation ? (
             <Box
               width="100%"
