@@ -39,11 +39,32 @@ describe('lyric character highlight', () => {
     expect(mixHexColors('#475569', '#22d3ee', 1)).toBe('#22d3ee')
   })
 
-  it('fades the three waiting circles sequentially toward the first lyric line', () => {
+  it('brightens three solid waiting circles sequentially before the first lyric line', () => {
     expect(getWaitingCircles(0, 10).map((item) => item.glyph)).toEqual(['●', '●', '●'])
-    expect(getWaitingCircles(8, 10).map((item) => item.glyph)).toEqual(['•', '●', '●'])
-    expect(getWaitingCircles(8.8, 10).map((item) => item.glyph)).toEqual([' ', '•', '●'])
-    expect(getWaitingCircles(9.6, 10).map((item) => item.glyph)).toEqual([' ', ' ', '•'])
+    expect(getWaitingCircles(0, 10).map((item) => item.intensity)).toEqual([0, 0, 0])
+    expect(getWaitingCircles(0, 10).map((item) => item.opacity)).toEqual([1, 1, 1])
+    expect(getWaitingCircles(7.92, 10).map((item) => item.intensity)).toEqual([
+      expect.closeTo(0.5),
+      0,
+      0,
+    ])
+    expect(getWaitingCircles(8.56, 10).map((item) => item.intensity)).toEqual([
+      1,
+      expect.closeTo(0.5),
+      0,
+    ])
+    expect(getWaitingCircles(9.2, 10).map((item) => item.intensity)).toEqual([
+      1,
+      1,
+      expect.closeTo(0.5),
+    ])
+    expect(getWaitingCircles(9.76, 10).map((item) => item.opacity)).toEqual([
+      expect.closeTo(0.5),
+      expect.closeTo(0.5),
+      expect.closeTo(0.5),
+    ])
+    expect(getWaitingCircles(9.9, 10).map((item) => item.glyph)).toEqual(['●', '●', '●'])
+    expect(getWaitingCircles(9.9, 10).every((item) => item.opacity < 0.2)).toBe(true)
     expect(getWaitingCircles(10, 10).map((item) => item.glyph)).toEqual([' ', ' ', ' '])
     expect(getWaitingCircles(11, 10).map((item) => item.glyph)).toEqual([' ', ' ', ' '])
   })

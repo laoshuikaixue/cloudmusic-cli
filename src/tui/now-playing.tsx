@@ -156,8 +156,23 @@ const TimedLyricLine = ({
         {waiting ? (
           <Text bold>
             {circles.map((circle, index) => (
-              <Text key={index} color={mixHexColors('#475569', '#22d3ee', circle.intensity)}>
-                {circle.glyph}
+              <Text
+                key={index}
+                color={mixHexColors(
+                  '#000000',
+                  mixHexColors('#475569', '#f8fafc', circle.intensity),
+                  circle.opacity,
+                )}
+              >
+                {process.env.NO_COLOR
+                  ? circle.opacity > 0.66
+                    ? circle.glyph
+                    : circle.opacity > 0.33
+                      ? '•'
+                      : circle.opacity > 0.06
+                        ? '·'
+                        : ' '
+                  : circle.glyph}
                 {index < circles.length - 1 ? ' ' : ''}
               </Text>
             ))}

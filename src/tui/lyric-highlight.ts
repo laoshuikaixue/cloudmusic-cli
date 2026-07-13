@@ -11,6 +11,7 @@ export interface TimedLyricGrapheme {
 export interface WaitingCircle {
   glyph: '●' | '•' | '·' | ' '
   intensity: number
+  opacity: number
 }
 
 interface TimedLyricWord {
@@ -26,7 +27,11 @@ export const splitGraphemes = (text: string) =>
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value))
 
-export const easeInOutSine = (value: number) => -(Math.cos(Math.PI * clamp(value)) - 1) / 2
+export const easeInOutSine = (value: number) => {
+  const progress = clamp(value)
+  if (progress === 0 || progress === 1) return progress
+  return -(Math.cos(Math.PI * progress) - 1) / 2
+}
 
 const hexChannel = (value: string, offset: number) =>
   Number.parseInt(value.slice(offset, offset + 2), 16)
@@ -45,7 +50,8 @@ export const mixHexColors = (from: string, to: string, progress: number) => {
 }
 
 /**
- * 首句开始前保持三个实心圆，临近时间点时从左到右缩小并淡出。
+ * 首句开始前保持三个灰色实心圆，临近时间点时从左到右依次变亮，
+ * 最后一起淡出，在第一句出现时完全隐藏。
  * 动画只由播放位置驱动，不使用墙钟循环，因此暂停和跳转后状态仍然准确。
  */
 export const getWaitingCircles = (
@@ -56,13 +62,23 @@ export const getWaitingCircles = (
   const duration = Math.max(0.2, Math.min(fadeDuration, firstLineTime))
   const fadeStart = Math.max(0, firstLineTime - duration)
   const progress = clamp((position - fadeStart) / duration)
+  const brightenEnd = 0.8
+  const brightenProgress = clamp(progress / brightenEnd)
+  const fadeProgress = clamp((progress - brightenEnd) / (1 - brightenEnd))
+  const opacity = 1 - easeInOutSine(fadeProgress)
+
+  if (position >= firstLineTime) {
+    return [0, 1, 2].map(() => ({ glyph: ' ' as const, intensity: 1, opacity: 0 }))
+  }
 
   return [0, 1, 2].map((index) => {
     const segmentStart = index / 3
-    const localProgress = clamp((progress - segmentStart) * 3)
-    const intensity = 1 - easeInOutSine(localProgress)
-    const glyph = intensity > 0.66 ? '●' : intensity > 0.33 ? '•' : intensity > 0.06 ? '·' : ' '
-    return { glyph, intensity }
+    const localProgress = clamp((brightenProgress - segmentStart) * 3)
+    return {
+      glyph: '●' as const,
+      intensity: easeInOutSine(localProgress),
+      opacity,
+    }
   })
 }
 
