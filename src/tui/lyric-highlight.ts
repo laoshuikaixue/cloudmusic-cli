@@ -57,8 +57,9 @@ export const getWaitingCircles = (
   const fadeStart = Math.max(0, firstLineTime - duration)
   const progress = clamp((position - fadeStart) / duration)
 
-  return [0, 0.18, 0.36].map((delay) => {
-    const localProgress = clamp((progress - delay) / (1 - delay))
+  return [0, 1, 2].map((index) => {
+    const segmentStart = index / 3
+    const localProgress = clamp((progress - segmentStart) * 3)
     const intensity = 1 - easeInOutSine(localProgress)
     const glyph = intensity > 0.66 ? '●' : intensity > 0.33 ? '•' : intensity > 0.06 ? '·' : ' '
     return { glyph, intensity }

@@ -39,9 +39,11 @@ describe('lyric character highlight', () => {
     expect(mixHexColors('#475569', '#22d3ee', 1)).toBe('#22d3ee')
   })
 
-  it('keeps three solid circles before fading them once toward the first lyric line', () => {
+  it('fades the three waiting circles sequentially toward the first lyric line', () => {
     expect(getWaitingCircles(0, 10).map((item) => item.glyph)).toEqual(['●', '●', '●'])
-    expect(getWaitingCircles(8.6, 10).map((item) => item.glyph)).toEqual(['•', '●', '●'])
+    expect(getWaitingCircles(8, 10).map((item) => item.glyph)).toEqual(['•', '●', '●'])
+    expect(getWaitingCircles(8.8, 10).map((item) => item.glyph)).toEqual([' ', '•', '●'])
+    expect(getWaitingCircles(9.6, 10).map((item) => item.glyph)).toEqual([' ', ' ', '•'])
     expect(getWaitingCircles(10, 10).map((item) => item.glyph)).toEqual([' ', ' ', ' '])
     expect(getWaitingCircles(11, 10).map((item) => item.glyph)).toEqual([' ', ' ', ' '])
   })
