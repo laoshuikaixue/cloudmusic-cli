@@ -10,6 +10,7 @@ import { toAppError } from './core/errors.js'
 import type {
   CommentPage,
   CollectionSummary,
+  LyricResult,
   OutputEnvelope,
   PlaybackStatus,
   PlaylistSummary,
@@ -245,15 +246,31 @@ program
 program
   .command('lyrics [id]')
   .description('获取歌词')
-  .action(async (id) => {
-    const result = await withDaemon<any>('lyrics', id ? { id: Number(id) } : undefined)
-    output(result, () =>
+  .option('--no-upgrade', '只返回网易云官方歌词，不尝试 TTML/QRC 升级')
+  .option('--words', '显示逐字起止时间')
+  .action(async (id, options) => {
+    const result = await withDaemon<LyricResult>('lyrics', {
+      ...(id ? { id: Number(id) } : {}),
+      upgrade: options.upgrade,
+    })
+    output(result, () => {
+      console.log(
+        `${result.format.toUpperCase()} · ${result.source}${result.upgraded ? ' · upgraded' : ''}`,
+      )
       result.lines.forEach((line: any) => {
+        const wordText = options.words
+          ? line.words
+              ?.map(
+                (word: any) =>
+                  `<${word.startTime.toFixed(3)}-${word.endTime.toFixed(3)}>${word.text}`,
+              )
+              .join('')
+          : undefined
         console.log(
-          `[${line.time.toFixed(2)}] ${line.text}${line.translation ? ` / ${line.translation}` : ''}`,
+          `[${line.time.toFixed(2)}] ${line.isBackground ? '↳ ' : line.isDuet ? '↔ ' : ''}${wordText || line.text}${line.translation ? ` / ${line.translation}` : ''}${line.romanization ? ` / ${line.romanization}` : ''}`,
         )
-      }),
-    )
+      })
+    })
   })
 
 program

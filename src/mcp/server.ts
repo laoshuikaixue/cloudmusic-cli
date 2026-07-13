@@ -78,8 +78,14 @@ const tools = [
   },
   {
     name: 'get_lyrics',
-    description: '获取当前歌曲或指定歌曲的时间轴歌词。',
-    inputSchema: { type: 'object', properties: { id: { type: 'number' } } },
+    description: '获取当前歌曲或指定歌曲的歌词，包含 YRC/QRC/TTML 逐字时间与升级来源。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        upgrade: { type: 'boolean', description: '是否尝试 TTML/QRC 歌词升级，默认 true。' },
+      },
+    },
   },
   {
     name: 'get_spectrum_snapshot',

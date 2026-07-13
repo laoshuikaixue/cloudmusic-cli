@@ -12,6 +12,12 @@ const defaultConfig: AppConfig = {
   binaries: {},
   scrobble: { enabled: true, mode: 'ncbl', configured: false },
   smtc: { enabled: process.platform === 'win32' },
+  lyrics: {
+    upgrade: true,
+    enableTtml: true,
+    enableQrc: true,
+    amllDbServer: 'https://amlldb.bikonoo.com/%p/%s.ttml',
+  },
 }
 
 const ensureParent = async (file: string) => mkdir(dirname(file), { recursive: true })
@@ -48,6 +54,7 @@ export class AppStore {
       binaries: { ...defaultConfig.binaries, ...stored.binaries },
       scrobble: { ...defaultConfig.scrobble, ...stored.scrobble },
       smtc: { ...defaultConfig.smtc, ...stored.smtc },
+      lyrics: { ...defaultConfig.lyrics, ...stored.lyrics },
     }
     // 早期开发版没有设置页，旧配置中的 enabled=false 只是旧默认值，不代表用户选择。
     if (stored.scrobble && stored.scrobble.configured === undefined) {
@@ -69,6 +76,7 @@ export class AppStore {
       binaries: { ...this.config.binaries, ...patch.binaries },
       scrobble: { ...this.config.scrobble, ...patch.scrobble },
       smtc: { ...this.config.smtc, ...patch.smtc },
+      lyrics: { ...this.config.lyrics, ...patch.lyrics },
     }
     await writeJson(paths.configFile, this.config)
     return this.getConfig()

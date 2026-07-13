@@ -124,9 +124,36 @@ export interface QueueContext {
 
 export interface LyricLine {
   time: number
+  endTime: number
   text: string
+  words?: LyricWord[]
   translation?: string
   romanization?: string
+  isBackground?: boolean
+  isDuet?: boolean
+}
+
+export interface LyricWord {
+  startTime: number
+  endTime: number
+  text: string
+  romanization?: string
+}
+
+export type LyricFormat = 'ttml' | 'qrc' | 'yrc' | 'lrc'
+export type LyricSource = 'netease' | 'amll' | 'qqmusic'
+
+export interface LyricResult {
+  lines: LyricLine[]
+  format: LyricFormat
+  source: LyricSource
+  upgraded: boolean
+  raw?: unknown
+  match?: {
+    status: 'accepted' | 'rejected' | 'uncertain'
+    reason: string
+    metrics: Record<string, number | undefined>
+  }
 }
 
 export interface SpectrumFrame {
@@ -163,6 +190,12 @@ export interface PlaybackStatus {
   }
   currentLyric?: string
   nextLyric?: string
+  currentLyricLine?: LyricLine
+  nextLyricLine?: LyricLine
+  backgroundLyricLines?: LyricLine[]
+  lyricFormat?: LyricFormat
+  lyricSource?: LyricSource
+  lyricsUpgraded?: boolean
   error?: string
 }
 
@@ -186,6 +219,12 @@ export interface AppConfig {
   }
   smtc: {
     enabled: boolean
+  }
+  lyrics: {
+    upgrade: boolean
+    enableTtml: boolean
+    enableQrc: boolean
+    amllDbServer: string
   }
 }
 

@@ -1,12 +1,13 @@
 import { createRequire } from 'node:module'
 import { AppError } from '../core/errors.js'
-import { mergeLyrics } from '../core/lyrics.js'
+import { parseNeteaseLyrics } from '../core/lyrics.js'
+import { upgradeLyrics } from './lyric-upgrade.js'
 import type {
   AppConfig,
   CloudLibrary,
   CollectionSummary,
   ListeningRecordEntry,
-  LyricLine,
+  LyricResult,
   CommentPage,
   MusicComment,
   NewSongArea,
@@ -95,6 +96,9 @@ const normalizeComment = (raw: any): MusicComment => ({
 })
 
 export class NeteaseApi {
+  private readonly lyricCache = new Map<number, Promise<LyricResult>>()
+  private readonly upgradedLyricCache = new Map<string, Promise<LyricResult>>()
+
   constructor(private readonly getCookie: () => string) {}
 
   async initialize() {
@@ -190,9 +194,40 @@ export class NeteaseApi {
     return normalizeSong(raw)
   }
 
-  async lyrics(id: number): Promise<{ lines: LyricLine[]; raw: any }> {
-    const raw = await this.call<any>('lyric_new', { id })
-    return { lines: mergeLyrics(raw), raw }
+  async lyrics(id: number): Promise<LyricResult> {
+    let promise = this.lyricCache.get(id)
+    if (!promise) {
+      promise = this.call<any>('lyric_new', { id }).then((raw) => {
+        const parsed = parseNeteaseLyrics(raw)
+        return {
+          lines: parsed.lines,
+          format: parsed.format,
+          source: 'netease',
+          upgraded: false,
+          raw,
+        }
+      })
+      this.lyricCache.set(id, promise)
+    }
+    return promise
+  }
+
+  async upgradedLyrics(song: Song, config: AppConfig, base?: LyricResult): Promise<LyricResult> {
+    const key = [
+      song.id,
+      config.lyrics.upgrade ? 1 : 0,
+      config.lyrics.enableTtml ? 1 : 0,
+      config.lyrics.enableQrc ? 1 : 0,
+      config.lyrics.amllDbServer,
+    ].join(':')
+    let promise = this.upgradedLyricCache.get(key)
+    if (!promise) {
+      promise = (base ? Promise.resolve(base) : this.lyrics(song.id)).then((official) =>
+        upgradeLyrics(song, official, config),
+      )
+      this.upgradedLyricCache.set(key, promise)
+    }
+    return promise
   }
 
   async resolveSource(id: number, config: AppConfig): Promise<SourceResult> {

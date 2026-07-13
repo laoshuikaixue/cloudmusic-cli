@@ -10,6 +10,7 @@ import type {
   CommentPage,
   HistoryEntry,
   ListeningRecordEntry,
+  LyricLine,
   MusicComment,
   PlaybackMode,
   PlaybackStatus,
@@ -120,6 +121,38 @@ const formatTime = (seconds: number) => {
   const minute = Math.floor(seconds / 60)
   const second = Math.floor(seconds % 60)
   return `${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+}
+
+const TimedLyricLine = ({ line, position }: { line?: LyricLine; position: number }) => {
+  if (!line) return <Text>暂无同步歌词</Text>
+  const prefix = line.isBackground ? '↳ ' : line.isDuet ? '↔ ' : ''
+  if (!line.words?.length) {
+    return (
+      <Text bold color={line.isBackground ? 'magenta' : 'cyan'}>
+        {prefix}
+        {line.text}
+      </Text>
+    )
+  }
+  return (
+    <Text bold>
+      <Text color={line.isBackground ? 'magenta' : 'cyan'}>{prefix}</Text>
+      {line.words.map((word, index) => {
+        const active = position >= word.startTime && position < word.endTime
+        const completed = position >= word.endTime
+        return (
+          <Text
+            key={`${word.startTime}-${index}`}
+            color={active ? 'white' : completed ? (line.isBackground ? 'magenta' : 'cyan') : 'gray'}
+            bold={active}
+            dimColor={!active && !completed}
+          >
+            {word.text}
+          </Text>
+        )
+      })}
+    </Text>
+  )
 }
 
 const songLabel = (song: Song) => {
@@ -896,6 +929,11 @@ export const NowPlaying = () => {
           }
         }
         if (index === 4) patch = { allowTrial: !settingsConfig.allowTrial }
+        if (index === 6) {
+          patch = {
+            lyrics: { ...settingsConfig.lyrics, upgrade: !settingsConfig.lyrics.upgrade },
+          }
+        }
         await callDaemon('config.set', { patch })
       }
       setSettingsConfig(await callDaemon<AppConfig>('config.get'))
@@ -1266,8 +1304,8 @@ export const NowPlaying = () => {
     if (mode === 'settings') {
       if (key.escape || controlInput === 'o' || input === ',') return setMode('normal')
       if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setSettingsIndex((index) => Math.min(6, index + 1))
-      if (settingsIndex === 6 && (key.rightArrow || key.return || input === ' ')) {
+      if (key.downArrow) return setSettingsIndex((index) => Math.min(7, index + 1))
+      if (settingsIndex === 7 && (key.rightArrow || key.return || input === ' ')) {
         return void openAccountPage()
       }
       if (key.leftArrow) void changeSetting(settingsIndex, -1)
@@ -1412,6 +1450,7 @@ export const NowPlaying = () => {
         ['解灰回退', settingsConfig.unblock.enabled ? '开启' : '关闭'],
         ['官方试听', settingsConfig.allowTrial ? '允许' : '关闭'],
         ['Windows SMTC', settingsConfig.smtc.enabled ? '开启' : '关闭'],
+        ['歌词升级', settingsConfig.lyrics.upgrade ? 'TTML / QRC' : '关闭'],
         [
           '网易云账号',
           account.loggedIn
@@ -1792,11 +1831,27 @@ export const NowPlaying = () => {
       </Box>
 
       <Box marginTop={1} paddingX={2} flexDirection="column">
-        <Text dimColor>LYRICS</Text>
-        <Text bold color="cyan">
-          {status.currentLyric || '暂无同步歌词'}
+        <Text dimColor>
+          LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()} ·{' '}
+          {status.lyricSource === 'amll'
+            ? 'AMLL'
+            : status.lyricSource === 'qqmusic'
+              ? 'QQ MUSIC'
+              : 'NETEASE'}
+          {status.lyricsUpgraded ? ' · UPGRADED' : ''}
         </Text>
-        <Text dimColor>{status.nextLyric || ' '}</Text>
+        <TimedLyricLine line={status.currentLyricLine} position={status.position} />
+        {status.currentLyricLine?.translation ? (
+          <Text color="yellow">{status.currentLyricLine.translation}</Text>
+        ) : null}
+        {status.backgroundLyricLines?.slice(0, 1).map((line) => (
+          <TimedLyricLine
+            key={`${line.time}-${line.text}`}
+            line={line}
+            position={status.position}
+          />
+        ))}
+        <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
       </Box>
 
       <Box marginTop={1} paddingX={2} flexDirection="column">

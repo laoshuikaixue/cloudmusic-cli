@@ -3,13 +3,14 @@ import { AudioPipeline } from '../audio/pipeline.js'
 import { NeteaseApi } from '../api/netease.js'
 import { AppError } from '../core/errors.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
-import { findLyricIndex } from '../core/lyrics.js'
+import { findActiveBackgroundLyrics, findLyricIndex } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
 import { SmtcBridge, type SmtcEvent } from '../system/smtc.js'
 import type {
   AppConfig,
   HistoryEntry,
   LyricLine,
+  LyricResult,
   NewSongArea,
   PlaybackStatus,
   QueueSnapshot,
@@ -58,6 +59,12 @@ export class PlayerDaemon {
   private currentUrl = ''
   private sourceResolvedAt = 0
   private lyrics: LyricLine[] = []
+  private lyricResult: LyricResult = {
+    lines: [],
+    format: 'lrc',
+    source: 'netease',
+    upgraded: false,
+  }
   private error?: string
   private cycle = 0
   private scrobbledCycle = -1
@@ -167,14 +174,29 @@ export class PlayerDaemon {
     this.state = 'loading'
     this.error = undefined
     this.resetPlaybackCycle()
+    const cycle = this.cycle
     const [source, lyricResult] = await Promise.all([
       this.api.resolveSource(song.id, this.config),
-      this.api.lyrics(song.id).catch(() => ({ lines: [], raw: null })),
+      this.api.lyrics(song.id).catch((): LyricResult => ({
+        lines: [],
+        format: 'lrc',
+        source: 'netease',
+        upgraded: false,
+      })),
     ])
     this.source = source
     this.currentUrl = source.url
     this.sourceResolvedAt = Date.now()
+    this.lyricResult = lyricResult
     this.lyrics = lyricResult.lines
+    void this.api
+      .upgradedLyrics(song, this.config, lyricResult)
+      .then((upgraded) => {
+        if (this.cycle !== cycle || this.song?.id !== song.id) return
+        this.lyricResult = upgraded
+        this.lyrics = upgraded.lines
+      })
+      .catch(() => undefined)
     await this.pipeline.start(source.url, {
       mpvPath: this.config.binaries.mpv || 'mpv',
       ffmpegPath: this.config.binaries.ffmpeg || 'ffmpeg',
@@ -452,6 +474,10 @@ export class PlayerDaemon {
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
     const lyricIndex = findLyricIndex(this.lyrics, position)
+    const currentLyricLine = lyricIndex >= 0 ? this.lyrics[lyricIndex] : undefined
+    const nextLyricLine = this.lyrics
+      .slice(Math.max(0, lyricIndex + 1))
+      .find((line) => !line.isBackground)
     return {
       daemon: 'running',
       state: this.state,
@@ -471,8 +497,14 @@ export class PlayerDaemon {
       scrobbleEnabled: this.config.scrobble.enabled,
       scrobbleMode: this.config.scrobble.mode,
       lastScrobble: this.lastScrobble,
-      currentLyric: this.lyrics[lyricIndex]?.text,
-      nextLyric: this.lyrics[lyricIndex + 1]?.text,
+      currentLyric: currentLyricLine?.text,
+      nextLyric: nextLyricLine?.text,
+      currentLyricLine,
+      nextLyricLine,
+      backgroundLyricLines: findActiveBackgroundLyrics(this.lyrics, position),
+      lyricFormat: this.lyricResult.format,
+      lyricSource: this.lyricResult.source,
+      lyricsUpgraded: this.lyricResult.upgraded,
       error: this.error,
     }
   }
@@ -625,7 +657,16 @@ export class PlayerDaemon {
       case 'lyrics': {
         const id = params.id ? numberParam(params.id, 'id') : this.song?.id
         if (!id) throw new AppError('NOT_PLAYING', '当前没有歌曲')
-        return this.api.lyrics(id)
+        if (
+          this.song?.id === id &&
+          this.lyricResult.lines.length &&
+          (this.lyricResult.upgraded || params.upgrade === false)
+        ) {
+          return this.lyricResult
+        }
+        const song = this.song?.id === id ? this.song : await this.api.songDetail(id)
+        const base = await this.api.lyrics(id)
+        return params.upgrade === false ? base : this.api.upgradedLyrics(song, this.config, base)
       }
       case 'queue.list':
         return this.queue
