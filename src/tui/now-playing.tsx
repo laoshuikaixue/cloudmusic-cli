@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
-import { interpolateWordGraphemes } from './lyric-highlight.js'
+import { interpolateWordGraphemes, mixHexColors } from './lyric-highlight.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -150,29 +150,16 @@ const TimedLyricLine = ({ line, position }: { line?: LyricLine; position: number
         {line.words.flatMap((word, wordIndex) =>
           interpolateWordGraphemes(word.text, word.startTime, word.endTime, position).map(
             (grapheme, graphemeIndex) => {
-              const activeShade =
-                grapheme.brightness >= 0.75
-                  ? '#f8fafc'
-                  : grapheme.brightness >= 0.5
-                    ? '#dbeafe'
-                    : grapheme.brightness >= 0.25
-                      ? '#94a3b8'
-                      : '#64748b'
+              const upcomingColor = '#475569'
+              const completedColor = line.isBackground ? '#e879f9' : '#22d3ee'
               const color =
                 grapheme.phase === 'completed'
-                  ? line.isBackground
-                    ? 'magenta'
-                    : 'cyan'
+                  ? completedColor
                   : grapheme.phase === 'active'
-                    ? activeShade
-                    : 'gray'
+                    ? mixHexColors(upcomingColor, completedColor, grapheme.brightness)
+                    : upcomingColor
               return (
-                <Text
-                  key={`${word.startTime}-${wordIndex}-${graphemeIndex}`}
-                  color={color}
-                  bold={grapheme.phase === 'active'}
-                  dimColor={grapheme.phase === 'upcoming'}
-                >
+                <Text key={`${word.startTime}-${wordIndex}-${graphemeIndex}`} color={color}>
                   {grapheme.text}
                 </Text>
               )
@@ -252,6 +239,7 @@ export const NowPlaying = () => {
   const [commentReturnMode, setCommentReturnMode] = useState<PageMode>('normal')
   const [message, setMessage] = useState('按 / 搜索歌曲，按 o 打开设置')
   const [terminalWidth, setTerminalWidth] = useState(process.stdout.columns || 80)
+  const [lyricVisualPosition, setLyricVisualPosition] = useState(0)
   const qrTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const deleteTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const controlBusy = useRef(false)
@@ -260,11 +248,46 @@ export const NowPlaying = () => {
   const seekTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const seekInFlight = useRef(false)
   const completeExitInProgress = useRef(false)
+  const lyricClockSample = useRef({
+    position: 0,
+    receivedAt: Date.now(),
+    state: emptyStatus.state,
+    duration: 0,
+    songId: undefined as number | undefined,
+  })
 
   const updateStatus = (nextStatus: PlaybackStatus) => {
+    const previousSample = lyricClockSample.current
+    const sameSong = previousSample.songId === nextStatus.song?.id
+    const positionJump = Math.abs(nextStatus.position - previousSample.position) > 0.5
+    lyricClockSample.current = {
+      position: nextStatus.position,
+      receivedAt: Date.now(),
+      state: nextStatus.state,
+      duration: nextStatus.duration,
+      songId: nextStatus.song?.id,
+    }
+    setLyricVisualPosition((current) =>
+      !sameSong || positionJump || nextStatus.state !== 'playing'
+        ? nextStatus.position
+        : Math.max(current, nextStatus.position),
+    )
     statusRef.current = nextStatus
     setStatus(nextStatus)
   }
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const sample = lyricClockSample.current
+      if (sample.state !== 'playing') return
+      const elapsed = Math.min(0.14, Math.max(0, (Date.now() - sample.receivedAt) / 1000))
+      const position = Math.min(sample.duration || Infinity, sample.position + elapsed)
+      setLyricVisualPosition((current) =>
+        Math.abs(current - position) < 0.001 ? current : position,
+      )
+    }, 33)
+    return () => clearInterval(timer)
+  }, [])
 
   const runControl = (method: string, params?: Record<string, unknown>) => {
     if (controlBusy.current) return
@@ -1869,7 +1892,7 @@ export const NowPlaying = () => {
               : 'NETEASE'}
           {status.lyricsUpgraded ? ' · UPGRADED' : ''}
         </Text>
-        <TimedLyricLine line={status.currentLyricLine} position={status.position} />
+        <TimedLyricLine line={status.currentLyricLine} position={lyricVisualPosition} />
         {status.currentLyricLine?.translation ? (
           <Box
             width="100%"
@@ -1882,7 +1905,7 @@ export const NowPlaying = () => {
           <TimedLyricLine
             key={`${line.time}-${line.text}`}
             line={line}
-            position={status.position}
+            position={lyricVisualPosition}
           />
         ))}
         <Box width="100%" justifyContent={status.nextLyricLine?.isDuet ? 'flex-end' : 'flex-start'}>

@@ -15,6 +15,24 @@ export const splitGraphemes = (text: string) =>
 
 const clamp = (value: number) => Math.max(0, Math.min(1, value))
 
+export const easeInOutSine = (value: number) => -(Math.cos(Math.PI * clamp(value)) - 1) / 2
+
+const hexChannel = (value: string, offset: number) =>
+  Number.parseInt(value.slice(offset, offset + 2), 16)
+
+export const mixHexColors = (from: string, to: string, progress: number) => {
+  const amount = clamp(progress)
+  const start = from.replace('#', '')
+  const end = to.replace('#', '')
+  const channel = (offset: number) =>
+    Math.round(
+      hexChannel(start, offset) + (hexChannel(end, offset) - hexChannel(start, offset)) * amount,
+    )
+      .toString(16)
+      .padStart(2, '0')
+  return `#${channel(0)}${channel(2)}${channel(4)}`
+}
+
 /**
  * 部分歌词源只提供词级时间。这里在该时间片内部按可见 Unicode 字符均分，
  * 生成用于终端明暗渐变的视觉时间；不会修改 daemon 保存的原始歌词时间。
@@ -49,7 +67,9 @@ export const interpolateWordGraphemes = (
         ? 1
         : phase === 'upcoming'
           ? 0
-          : clamp((position - characterStart) / Math.max(0.001, characterEnd - characterStart))
+          : easeInOutSine(
+              (position - characterStart) / Math.max(0.001, characterEnd - characterStart),
+            )
 
     return {
       text: grapheme,
