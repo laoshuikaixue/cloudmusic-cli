@@ -195,6 +195,7 @@ const parseTtmlWords = (
   nodes: XmlNode[],
   fallbackStart: number,
   fallbackEnd: number,
+  isDuet = false,
 ): {
   words: LyricWord[]
   translation?: string
@@ -229,7 +230,7 @@ const parseTtmlWords = (
         continue
       }
       if (role === 'x-bg') {
-        const nested = parseTtmlWords(children, startTime, endTime)
+        const nested = parseTtmlWords(children, startTime, endTime, isDuet)
         const backgroundText = nested.words.map((word) => word.text).join('') || text
         if (backgroundText.trim()) {
           backgrounds.push({
@@ -243,11 +244,12 @@ const parseTtmlWords = (
             translation: nested.translation,
             romanization: nested.romanization,
             isBackground: true,
+            isDuet,
           })
         }
         continue
       }
-      const nested = parseTtmlWords(children, startTime, endTime)
+      const nested = parseTtmlWords(children, startTime, endTime, isDuet)
       if (nested.words.length) {
         words.push(...nested.words)
         backgrounds.push(...nested.backgrounds)
@@ -277,7 +279,10 @@ export const parseTtml = (input?: string): LyricLine[] => {
   }
   const paragraphs = collectElements(document, 'p')
   const result: LyricLine[] = []
-  let mainAgent = ''
+  const declaredAgents = collectElements(document, 'agent')
+  let mainAgent =
+    attribute(declaredAgents.find((agent) => attribute(agent, 'type') === 'person') || {}, 'id') ||
+    ''
   for (const paragraph of paragraphs) {
     const childrenEntry = Object.entries(paragraph).find(([key]) => {
       const localName = key.includes(':') ? key.slice(key.lastIndexOf(':') + 1) : key
@@ -288,8 +293,9 @@ export const parseTtml = (input?: string): LyricLine[] => {
     const endTime = parseTtmlTime(attribute(paragraph, 'end'))
     const agent = attribute(paragraph, 'agent') || ''
     if (!mainAgent && agent) mainAgent = agent
+    const isDuet = Boolean(mainAgent && agent && agent !== mainAgent)
     const role = attribute(paragraph, 'role')
-    const parsed = parseTtmlWords(children, time, endTime)
+    const parsed = parseTtmlWords(children, time, endTime, isDuet)
     let words = parsed.words
     if (!words.length) {
       const text = nodeText(children).trim()
@@ -308,7 +314,7 @@ export const parseTtml = (input?: string): LyricLine[] => {
         translation: parsed.translation,
         romanization: parsed.romanization,
         isBackground: role === 'x-bg',
-        isDuet: Boolean(mainAgent && agent && agent !== mainAgent),
+        isDuet,
       })
     }
     result.push(...parsed.backgrounds)

@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
+import { interpolateWordGraphemes } from './lyric-highlight.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -124,34 +125,62 @@ const formatTime = (seconds: number) => {
 }
 
 const TimedLyricLine = ({ line, position }: { line?: LyricLine; position: number }) => {
-  if (!line) return <Text>暂无同步歌词</Text>
+  if (!line) {
+    return (
+      <Box width="100%" justifyContent="flex-start">
+        <Text>暂无同步歌词</Text>
+      </Box>
+    )
+  }
   const prefix = line.isBackground ? '↳ ' : line.isDuet ? '↔ ' : ''
   if (!line.words?.length) {
     return (
-      <Text bold color={line.isBackground ? 'magenta' : 'cyan'}>
-        {prefix}
-        {line.text}
-      </Text>
+      <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
+        <Text bold color={line.isBackground ? 'magenta' : 'cyan'}>
+          {prefix}
+          {line.text}
+        </Text>
+      </Box>
     )
   }
   return (
-    <Text bold>
-      <Text color={line.isBackground ? 'magenta' : 'cyan'}>{prefix}</Text>
-      {line.words.map((word, index) => {
-        const active = position >= word.startTime && position < word.endTime
-        const completed = position >= word.endTime
-        return (
-          <Text
-            key={`${word.startTime}-${index}`}
-            color={active ? 'white' : completed ? (line.isBackground ? 'magenta' : 'cyan') : 'gray'}
-            bold={active}
-            dimColor={!active && !completed}
-          >
-            {word.text}
-          </Text>
-        )
-      })}
-    </Text>
+    <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
+      <Text bold>
+        <Text color={line.isBackground ? 'magenta' : 'cyan'}>{prefix}</Text>
+        {line.words.flatMap((word, wordIndex) =>
+          interpolateWordGraphemes(word.text, word.startTime, word.endTime, position).map(
+            (grapheme, graphemeIndex) => {
+              const activeShade =
+                grapheme.brightness >= 0.75
+                  ? '#f8fafc'
+                  : grapheme.brightness >= 0.5
+                    ? '#dbeafe'
+                    : grapheme.brightness >= 0.25
+                      ? '#94a3b8'
+                      : '#64748b'
+              const color =
+                grapheme.phase === 'completed'
+                  ? line.isBackground
+                    ? 'magenta'
+                    : 'cyan'
+                  : grapheme.phase === 'active'
+                    ? activeShade
+                    : 'gray'
+              return (
+                <Text
+                  key={`${word.startTime}-${wordIndex}-${graphemeIndex}`}
+                  color={color}
+                  bold={grapheme.phase === 'active'}
+                  dimColor={grapheme.phase === 'upcoming'}
+                >
+                  {grapheme.text}
+                </Text>
+              )
+            },
+          ),
+        )}
+      </Text>
+    </Box>
   )
 }
 
@@ -1842,7 +1871,12 @@ export const NowPlaying = () => {
         </Text>
         <TimedLyricLine line={status.currentLyricLine} position={status.position} />
         {status.currentLyricLine?.translation ? (
-          <Text color="yellow">{status.currentLyricLine.translation}</Text>
+          <Box
+            width="100%"
+            justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
+          >
+            <Text color="yellow">{status.currentLyricLine.translation}</Text>
+          </Box>
         ) : null}
         {status.backgroundLyricLines?.slice(0, 1).map((line) => (
           <TimedLyricLine
@@ -1851,7 +1885,9 @@ export const NowPlaying = () => {
             position={status.position}
           />
         ))}
-        <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
+        <Box width="100%" justifyContent={status.nextLyricLine?.isDuet ? 'flex-end' : 'flex-start'}>
+          <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
+        </Box>
       </Box>
 
       <Box marginTop={1} paddingX={2} flexDirection="column">

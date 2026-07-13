@@ -65,7 +65,10 @@ describe('lyric parsing', () => {
             <span ttm:role="x-translation">你好世界</span>
             <span ttm:role="x-bg" begin="1.5s" end="2.5s"><span begin="1.5s" end="2.5s">(echo)</span></span>
           </p>
-          <p begin="3s" end="4s" ttm:agent="v2"><span begin="3s" end="4s">Reply</span></p>
+          <p begin="3s" end="4s" ttm:agent="v2">
+            <span begin="3s" end="4s">Reply</span>
+            <span ttm:role="x-bg" begin="3.2s" end="3.8s"><span begin="3.2s" end="3.8s">(right echo)</span></span>
+          </p>
         </div></body>
       </tt>
     `)
@@ -74,6 +77,28 @@ describe('lyric parsing', () => {
         expect.objectContaining({ text: 'Hello world', translation: '你好世界', isDuet: false }),
         expect.objectContaining({ text: '(echo)', isBackground: true }),
         expect.objectContaining({ text: 'Reply', isDuet: true }),
+        expect.objectContaining({ text: '(right echo)', isBackground: true, isDuet: true }),
+      ]),
+    )
+  })
+
+  it('uses declared TTML primary agent even when the duet singer appears first', () => {
+    const lines = parseTtml(`
+      <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+        <head><metadata>
+          <ttm:agent type="person" xml:id="v1" />
+          <ttm:agent type="other" xml:id="v2" />
+        </metadata></head>
+        <body><div>
+          <p begin="1s" end="2s" ttm:agent="v2"><span begin="1s" end="2s">right</span></p>
+          <p begin="2s" end="3s" ttm:agent="v1"><span begin="2s" end="3s">left</span></p>
+        </div></body>
+      </tt>
+    `)
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: 'right', isDuet: true }),
+        expect.objectContaining({ text: 'left', isDuet: false }),
       ]),
     )
   })
