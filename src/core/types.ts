@@ -160,6 +160,7 @@ export interface SpectrumFrame {
   position: number
   bins: number[]
   peak: number
+  generation?: number
 }
 
 export interface PlaybackStatus {
@@ -192,10 +193,13 @@ export interface PlaybackStatus {
   nextLyric?: string
   currentLyricLine?: LyricLine
   nextLyricLine?: LyricLine
+  previousLyricLines?: LyricLine[]
+  upcomingLyricLines?: LyricLine[]
   backgroundLyricLines?: LyricLine[]
   lyricFormat?: LyricFormat
   lyricSource?: LyricSource
   lyricsUpgraded?: boolean
+  spectrumGeneration?: number
   error?: string
 }
 

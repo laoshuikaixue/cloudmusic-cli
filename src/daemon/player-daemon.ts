@@ -3,7 +3,7 @@ import { AudioPipeline } from '../audio/pipeline.js'
 import { NeteaseApi } from '../api/netease.js'
 import { AppError } from '../core/errors.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
-import { findActiveBackgroundLyrics, findLyricIndex } from '../core/lyrics.js'
+import { findActiveBackgroundLyrics, getLyricContext } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
 import { SmtcBridge, type SmtcEvent } from '../system/smtc.js'
 import type {
@@ -473,11 +473,9 @@ export class PlayerDaemon {
 
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
-    const lyricIndex = findLyricIndex(this.lyrics, position)
-    const currentLyricLine = lyricIndex >= 0 ? this.lyrics[lyricIndex] : undefined
-    const nextLyricLine = this.lyrics
-      .slice(Math.max(0, lyricIndex + 1))
-      .find((line) => !line.isBackground)
+    const lyricContext = getLyricContext(this.lyrics, position)
+    const currentLyricLine = lyricContext.currentLine
+    const nextLyricLine = lyricContext.upcomingLines[0]
     return {
       daemon: 'running',
       state: this.state,
@@ -501,10 +499,13 @@ export class PlayerDaemon {
       nextLyric: nextLyricLine?.text,
       currentLyricLine,
       nextLyricLine,
+      previousLyricLines: lyricContext.previousLines,
+      upcomingLyricLines: lyricContext.upcomingLines,
       backgroundLyricLines: findActiveBackgroundLyrics(this.lyrics, position),
       lyricFormat: this.lyricResult.format,
       lyricSource: this.lyricResult.source,
       lyricsUpgraded: this.lyricResult.upgraded,
+      spectrumGeneration: this.pipeline.getSpectrumGeneration(),
       error: this.error,
     }
   }

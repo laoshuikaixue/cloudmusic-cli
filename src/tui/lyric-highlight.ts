@@ -8,6 +8,17 @@ export interface TimedLyricGrapheme {
   brightness: number
 }
 
+export interface WaitingCircle {
+  glyph: '●' | '•' | '·' | ' '
+  intensity: number
+}
+
+interface TimedLyricWord {
+  text: string
+  startTime: number
+  endTime: number
+}
+
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
 export const splitGraphemes = (text: string) =>
@@ -33,8 +44,67 @@ export const mixHexColors = (from: string, to: string, progress: number) => {
   return `#${channel(0)}${channel(2)}${channel(4)}`
 }
 
-export const getWaitingDots = (timestamp: number, interval = 400) =>
-  '.'.repeat((Math.floor(timestamp / interval) % 3) + 1)
+/**
+ * 首句开始前保持三个实心圆，临近时间点时从左到右缩小并淡出。
+ * 动画只由播放位置驱动，不使用墙钟循环，因此暂停和跳转后状态仍然准确。
+ */
+export const getWaitingCircles = (
+  position: number,
+  firstLineTime: number,
+  fadeDuration = 2.4,
+): WaitingCircle[] => {
+  const duration = Math.max(0.2, Math.min(fadeDuration, firstLineTime))
+  const fadeStart = Math.max(0, firstLineTime - duration)
+  const progress = clamp((position - fadeStart) / duration)
+
+  return [0, 0.18, 0.36].map((delay) => {
+    const localProgress = clamp((progress - delay) / (1 - delay))
+    const intensity = 1 - easeInOutSine(localProgress)
+    const glyph = intensity > 0.66 ? '●' : intensity > 0.33 ? '•' : intensity > 0.06 ? '·' : ' '
+    return { glyph, intensity }
+  })
+}
+
+/**
+ * 只为明显拖长的末词生成呼吸辉光强度。持续时间来自歌词时间轴，
+ * 不会把普通句尾或未唱字符误判为长音效果。
+ */
+export const getSustainGlowIntensity = (
+  words: readonly TimedLyricWord[],
+  wordIndex: number,
+  lineEndTime: number,
+  position: number,
+) => {
+  let lastVisibleIndex = -1
+  for (let index = words.length - 1; index >= 0; index -= 1) {
+    if (words[index]?.text.trim().length) {
+      lastVisibleIndex = index
+      break
+    }
+  }
+  if (lastVisibleIndex < 0 || wordIndex !== lastVisibleIndex) return 0
+
+  const word = words[wordIndex]
+  if (!word) return 0
+
+  const previousDurations = words
+    .slice(0, lastVisibleIndex)
+    .filter((item) => item.text.trim().length > 0)
+    .map((item) => Math.max(0.05, item.endTime - item.startTime))
+  const averageDuration = previousDurations.length
+    ? previousDurations.reduce((sum, value) => sum + value, 0) / previousDurations.length
+    : 0.45
+  const sustainEnd = Math.max(word.endTime, lineEndTime)
+  const sustainDuration = sustainEnd - word.startTime
+
+  if (sustainDuration < Math.max(0.9, averageDuration * 1.6)) return 0
+  if (position < word.startTime || position > sustainEnd) return 0
+
+  const fadeIn = easeInOutSine(Math.min(1, (position - word.startTime) / 0.3))
+  const fadeOut = easeInOutSine(Math.min(1, (sustainEnd - position) / 0.3))
+  const breathing = 0.78 + Math.sin(position * Math.PI * 2 * 1.2) * 0.22
+  return clamp(fadeIn * fadeOut * breathing)
+}
 
 /**
  * 部分歌词源只提供词级时间。这里在该时间片内部按可见 Unicode 字符均分，

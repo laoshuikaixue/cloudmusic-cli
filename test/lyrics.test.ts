@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   findLyricIndex,
+  getLyricContext,
   mergeLyrics,
   parseLrc,
   parseQrc,
@@ -25,6 +26,20 @@ describe('lyric parsing', () => {
     })
     expect(lines[0]).toMatchObject({ text: 'hello', translation: '你好' })
     expect(findLyricIndex(lines, 1.2)).toBe(0)
+  })
+
+  it('builds a bounded lyric context while excluding background vocals', () => {
+    const lines = [
+      { time: 1, endTime: 2, text: 'first' },
+      { time: 1.2, endTime: 1.8, text: 'echo', isBackground: true },
+      { time: 2, endTime: 3, text: 'second' },
+      { time: 3, endTime: 4, text: 'third' },
+      { time: 4, endTime: 5, text: 'fourth' },
+    ]
+    const context = getLyricContext(lines, 3.2, 2, 2)
+    expect(context.currentLine?.text).toBe('third')
+    expect(context.previousLines.map((line) => line.text)).toEqual(['first', 'second'])
+    expect(context.upcomingLines.map((line) => line.text)).toEqual(['fourth'])
   })
 
   it('preserves NetEase YRC word timing', () => {

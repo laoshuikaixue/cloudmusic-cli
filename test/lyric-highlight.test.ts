@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   easeInOutSine,
-  getWaitingDots,
+  getSustainGlowIntensity,
+  getWaitingCircles,
   interpolateWordGraphemes,
   mixHexColors,
   splitGraphemes,
@@ -38,10 +39,30 @@ describe('lyric character highlight', () => {
     expect(mixHexColors('#475569', '#22d3ee', 1)).toBe('#22d3ee')
   })
 
-  it('cycles the classic waiting ellipsis before the first lyric line', () => {
-    expect(getWaitingDots(0)).toBe('.')
-    expect(getWaitingDots(400)).toBe('..')
-    expect(getWaitingDots(800)).toBe('...')
-    expect(getWaitingDots(1200)).toBe('.')
+  it('keeps three solid circles before fading them once toward the first lyric line', () => {
+    expect(getWaitingCircles(0, 10).map((item) => item.glyph)).toEqual(['●', '●', '●'])
+    expect(getWaitingCircles(8.6, 10).map((item) => item.glyph)).toEqual(['•', '●', '●'])
+    expect(getWaitingCircles(10, 10).map((item) => item.glyph)).toEqual([' ', ' ', ' '])
+    expect(getWaitingCircles(11, 10).map((item) => item.glyph)).toEqual([' ', ' ', ' '])
+  })
+
+  it('adds glow only to a clearly sustained final word', () => {
+    const words = [
+      { text: '还', startTime: 10, endTime: 10.4 },
+      { text: '有', startTime: 10.4, endTime: 10.8 },
+      { text: '你', startTime: 10.8, endTime: 12.2 },
+    ]
+
+    expect(getSustainGlowIntensity(words, 0, 12.2, 11.4)).toBe(0)
+    expect(getSustainGlowIntensity(words, 2, 12.2, 11.4)).toBeGreaterThan(0)
+    expect(getSustainGlowIntensity(words, 2, 12.2, 12.2)).toBe(0)
+  })
+
+  it('does not glow for an ordinary final word', () => {
+    const words = [
+      { text: '不', startTime: 2, endTime: 2.4 },
+      { text: '会', startTime: 2.4, endTime: 2.85 },
+    ]
+    expect(getSustainGlowIntensity(words, 1, 2.85, 2.6)).toBe(0)
   })
 })

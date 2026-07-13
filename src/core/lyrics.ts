@@ -389,6 +389,25 @@ export const findLyricIndex = (lines: LyricLine[], position: number) => {
   return index
 }
 
+export const getLyricContext = (
+  lines: LyricLine[],
+  position: number,
+  previousCount = 2,
+  upcomingCount = 3,
+) => {
+  const primaryLines = lines.filter((line) => !line.isBackground)
+  const currentIndex = findLyricIndex(primaryLines, position)
+  const upcomingStart = Math.max(0, currentIndex + 1)
+  return {
+    currentLine: currentIndex >= 0 ? primaryLines[currentIndex] : undefined,
+    previousLines:
+      currentIndex > 0
+        ? primaryLines.slice(Math.max(0, currentIndex - previousCount), currentIndex)
+        : [],
+    upcomingLines: primaryLines.slice(upcomingStart, upcomingStart + upcomingCount),
+  }
+}
+
 export const findActiveBackgroundLyrics = (lines: LyricLine[], position: number) =>
   lines.filter(
     (line) =>

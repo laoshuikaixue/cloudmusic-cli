@@ -25,6 +25,7 @@ export class AudioPipeline extends EventEmitter {
   private position = 0
   private offset = 0
   private ffmpegError = ''
+  private spectrumGeneration = 0
   private currentUrl = ''
   private currentOptions?: PipelineOptions
   private transition: Promise<void> = Promise.resolve()
@@ -103,6 +104,7 @@ export class AudioPipeline extends EventEmitter {
     this.ffmpeg?.kill()
     await this.analyzer?.destroy().catch(() => undefined)
     this.ffmpeg = undefined
+    this.spectrumGeneration += 1
     this.analyzer = new SpectrumAnalyzer(offset)
     this.ffmpegError = ''
     const ffmpegArgs = [
@@ -187,13 +189,16 @@ export class AudioPipeline extends EventEmitter {
   }
 
   getSpectrum(): SpectrumFrame {
-    return (
-      this.analyzer?.frameAt(this.position) || {
-        position: this.position,
-        bins: new Array(64).fill(0),
-        peak: 0,
-      }
-    )
+    const frame = this.analyzer?.frameAt(this.position) || {
+      position: this.position,
+      bins: new Array(64).fill(0),
+      peak: 0,
+    }
+    return { ...frame, generation: this.spectrumGeneration }
+  }
+
+  getSpectrumGeneration() {
+    return this.spectrumGeneration
   }
 
   stop() {

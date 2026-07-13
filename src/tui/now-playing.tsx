@@ -4,8 +4,17 @@ import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
 import { getPlayerLayout } from './layout.js'
-import { getWaitingDots, interpolateWordGraphemes, mixHexColors } from './lyric-highlight.js'
-import { renderBrailleSpectrum, smoothSpectrumBins } from './spectrum-visualizer.js'
+import {
+  getSustainGlowIntensity,
+  getWaitingCircles,
+  interpolateWordGraphemes,
+  mixHexColors,
+} from './lyric-highlight.js'
+import {
+  isSpectrumFrameSynchronized,
+  renderSpectrumBars,
+  smoothSpectrumBins,
+} from './spectrum-visualizer.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -117,6 +126,7 @@ const emptyStatus: PlaybackStatus = {
   trial: false,
   queueLength: 0,
   queueIndex: -1,
+  spectrumGeneration: 0,
 }
 
 const formatTime = (seconds: number) => {
@@ -130,19 +140,31 @@ const TimedLyricLine = ({
   line,
   position,
   waiting = false,
+  waitingUntil = 0,
   placeholderAlignRight = false,
 }: {
   line?: LyricLine
   position: number
   waiting?: boolean
+  waitingUntil?: number
   placeholderAlignRight?: boolean
 }) => {
   if (!line) {
+    const circles = waiting ? getWaitingCircles(position, waitingUntil) : []
     return (
       <Box width="100%" justifyContent={placeholderAlignRight ? 'flex-end' : 'flex-start'}>
-        <Text color={waiting ? 'cyan' : undefined} dimColor>
-          {waiting ? getWaitingDots(Date.now()) : '暂无同步歌词'}
-        </Text>
+        {waiting ? (
+          <Text bold>
+            {circles.map((circle, index) => (
+              <Text key={index} color={mixHexColors('#475569', '#22d3ee', circle.intensity)}>
+                {circle.glyph}
+                {index < circles.length - 1 ? ' ' : ''}
+              </Text>
+            ))}
+          </Text>
+        ) : (
+          <Text dimColor>暂无同步歌词</Text>
+        )}
       </Box>
     )
   }
@@ -164,14 +186,21 @@ const TimedLyricLine = ({
         {line.words.flatMap((word, wordIndex) =>
           interpolateWordGraphemes(word.text, word.startTime, word.endTime, position).map(
             (grapheme, graphemeIndex) => {
-              const upcomingColor = '#475569'
-              const completedColor = line.isBackground ? '#e879f9' : '#22d3ee'
-              const color =
+              const inactiveColor = '#64748b'
+              const activeColor = line.isBackground ? '#e879f9' : '#22d3ee'
+              const baseColor =
                 grapheme.phase === 'completed'
-                  ? completedColor
+                  ? activeColor
                   : grapheme.phase === 'active'
-                    ? mixHexColors(upcomingColor, completedColor, grapheme.brightness)
-                    : upcomingColor
+                    ? mixHexColors(inactiveColor, activeColor, grapheme.brightness)
+                    : inactiveColor
+              const glow =
+                grapheme.phase === 'upcoming'
+                  ? 0
+                  : getSustainGlowIntensity(line.words || [], wordIndex, line.endTime, position)
+              const color = glow
+                ? mixHexColors(baseColor, '#ffffff', Math.min(0.78, glow * 0.78))
+                : baseColor
               return (
                 <Text key={`${word.startTime}-${wordIndex}-${graphemeIndex}`} color={color}>
                   {grapheme.text}
@@ -185,6 +214,15 @@ const TimedLyricLine = ({
   )
 }
 
+const ContextLyricLine = ({ line }: { line: LyricLine }) => (
+  <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
+    <Text color={process.env.NO_COLOR ? undefined : '#64748b'}>
+      {line.isDuet ? '↔ ' : ''}
+      {line.text}
+    </Text>
+  </Box>
+)
+
 const songLabel = (song: Song) => {
   const artists = song.artists.map((artist) => artist.name).join(' / ')
   return `${song.name} — ${artists}`
@@ -193,7 +231,7 @@ const songLabel = (song: Song) => {
 const Spectrum = ({ frame, width }: { frame: SpectrumFrame; width: number }) => {
   const usableWidth = Math.max(12, width)
   const lines = useMemo(() => {
-    return renderBrailleSpectrum(frame.bins, usableWidth)
+    return renderSpectrumBars(frame.bins, usableWidth)
   }, [frame, usableWidth])
   return (
     <Box flexDirection="column">
@@ -277,11 +315,12 @@ export const NowPlaying = () => {
     const previousSample = lyricClockSample.current
     const sameSong = previousSample.songId === nextStatus.song?.id
     const positionJump = Math.abs(nextStatus.position - previousSample.position) > 0.5
-    if (!sameSong) {
+    if (!sameSong || positionJump) {
       spectrumTarget.current = {
         position: nextStatus.position,
         bins: new Array(64).fill(0),
         peak: 0,
+        generation: nextStatus.spectrumGeneration,
       }
     }
     lyricClockSample.current = {
@@ -317,7 +356,12 @@ export const NowPlaying = () => {
     const timer = setInterval(() => {
       const target = spectrumTarget.current
       const currentStatus = statusRef.current
-      const synchronized = Math.abs(target.position - currentStatus.position) < 0.4
+      const synchronized = isSpectrumFrameSynchronized(
+        target.position,
+        currentStatus.position,
+        target.generation,
+        currentStatus.spectrumGeneration,
+      )
       const desiredBins =
         currentStatus.state === 'playing' && synchronized
           ? target.bins
@@ -328,7 +372,7 @@ export const NowPlaying = () => {
           return current
         }
         const peak = bins.reduce((maximum, value) => Math.max(maximum, value), 0)
-        return { position: target.position, bins, peak }
+        return { position: target.position, bins, peak, generation: target.generation }
       })
     }, 33)
     return () => clearInterval(timer)
@@ -437,7 +481,13 @@ export const NowPlaying = () => {
                 updateStatus(incoming)
               }
             }
-            if (event.event === 'spectrum') spectrumTarget.current = event.data as SpectrumFrame
+            if (
+              event.event === 'spectrum' &&
+              !seekInFlight.current &&
+              seekTarget.current === null
+            ) {
+              spectrumTarget.current = event.data as SpectrumFrame
+            }
           },
           () => {
             if (!disposed) reconnectTimer = setTimeout(() => void connectSubscription(), 500)
@@ -1931,12 +1981,14 @@ export const NowPlaying = () => {
         </Text>
       </Box>
 
-      <Box
-        flexDirection="column"
-        flexGrow={playerLayout.expanded ? 1 : 0}
-        justifyContent={playerLayout.expanded ? 'center' : 'flex-start'}
-      >
-        <Box marginTop={playerLayout.expanded ? 0 : 1} paddingX={2} flexDirection="column">
+      <Box flexDirection="column" flexGrow={playerLayout.expanded ? 1 : 0}>
+        <Box
+          marginTop={playerLayout.expanded ? 0 : 1}
+          paddingX={2}
+          flexDirection="column"
+          flexGrow={playerLayout.expanded ? 1 : 0}
+          justifyContent={playerLayout.expanded ? 'space-around' : 'flex-start'}
+        >
           <Text dimColor>
             LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()} ·{' '}
             {status.lyricSource === 'amll'
@@ -1946,33 +1998,36 @@ export const NowPlaying = () => {
                 : 'NETEASE'}
             {status.lyricsUpgraded ? ' · UPGRADED' : ''}
           </Text>
-          <TimedLyricLine
-            line={status.currentLyricLine}
-            position={lyricVisualPosition}
-            waiting={!status.currentLyricLine && Boolean(status.nextLyricLine)}
-            placeholderAlignRight={Boolean(status.nextLyricLine?.isDuet)}
-          />
-          {status.currentLyricLine?.translation ? (
-            <Box
-              width="100%"
-              justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
-            >
-              <Text color="yellow">{status.currentLyricLine.translation}</Text>
-            </Box>
-          ) : null}
-          {status.backgroundLyricLines?.slice(0, 1).map((line) => (
-            <TimedLyricLine
-              key={`${line.time}-${line.text}`}
-              line={line}
-              position={lyricVisualPosition}
-            />
+          {status.previousLyricLines?.slice(playerLayout.expanded ? -2 : -1).map((line) => (
+            <ContextLyricLine key={`previous-${line.time}-${line.text}`} line={line} />
           ))}
-          <Box
-            width="100%"
-            justifyContent={status.nextLyricLine?.isDuet ? 'flex-end' : 'flex-start'}
-          >
-            <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
+          <Box flexDirection="column" marginY={playerLayout.expanded ? 0 : 1}>
+            <TimedLyricLine
+              line={status.currentLyricLine}
+              position={lyricVisualPosition}
+              waiting={!status.currentLyricLine && Boolean(status.nextLyricLine)}
+              waitingUntil={status.nextLyricLine?.time || 0}
+              placeholderAlignRight={Boolean(status.nextLyricLine?.isDuet)}
+            />
+            {status.currentLyricLine?.translation ? (
+              <Box
+                width="100%"
+                justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
+              >
+                <Text color="yellow">{status.currentLyricLine.translation}</Text>
+              </Box>
+            ) : null}
+            {status.backgroundLyricLines?.slice(0, 1).map((line) => (
+              <TimedLyricLine
+                key={`${line.time}-${line.text}`}
+                line={line}
+                position={lyricVisualPosition}
+              />
+            ))}
           </Box>
+          {status.upcomingLyricLines?.slice(0, playerLayout.expanded ? 3 : 1).map((line) => (
+            <ContextLyricLine key={`upcoming-${line.time}-${line.text}`} line={line} />
+          ))}
         </Box>
       </Box>
 

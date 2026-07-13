@@ -1,5 +1,17 @@
 const clamp = (value: number) => Math.max(0, Math.min(1, value))
 
+export const isSpectrumFrameSynchronized = (
+  framePosition: number,
+  playbackPosition: number,
+  frameGeneration?: number,
+  playbackGeneration?: number,
+) => {
+  if (frameGeneration !== undefined && playbackGeneration !== undefined) {
+    return frameGeneration === playbackGeneration
+  }
+  return Math.abs(framePosition - playbackPosition) < 0.4
+}
+
 export const smoothSpectrumBins = (
   current: readonly number[],
   target: readonly number[],
@@ -33,36 +45,17 @@ export const resampleSpectrumBins = (bins: readonly number[], count: number) => 
   })
 }
 
-const brailleBit = (x: number, y: number) => {
-  if (x === 0) return [0, 1, 2, 6][y] || 0
-  return [3, 4, 5, 7][y] || 0
-}
+const blockLevels = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const
 
-const brailleCharacter = (left: number, right: number, rowOffset: 0 | 4) => {
-  let bits = 0
-  for (const [x, value] of [left, right].entries()) {
-    const halfHeight = Math.ceil(clamp(value) * 4)
-    if (!halfHeight) continue
-    const from = 4 - halfHeight
-    const to = 3 + halfHeight
-    for (let y = rowOffset; y < rowOffset + 4; y += 1) {
-      if (y >= from && y <= to) bits |= 1 << brailleBit(x, y - rowOffset)
-    }
-  }
-  return bits ? String.fromCodePoint(0x2800 + bits) : ' '
-}
+const blockForUnits = (units: number) => blockLevels[Math.max(0, Math.min(8, Math.round(units)))]!
 
-/** 将频带渲染为两行上下对称的 Braille 波形，每列字符承载两个水平采样点。 */
-export const renderBrailleSpectrum = (bins: readonly number[], columns: number) => {
+/** 将真实 PCM 频带渲染为带间隔、从底部向上生长的双层实心柱。 */
+export const renderSpectrumBars = (bins: readonly number[], columns: number) => {
   const width = Math.max(1, Math.floor(columns))
-  const samples = resampleSpectrumBins(bins, width * 2)
-  let top = ''
-  let bottom = ''
-  for (let column = 0; column < width; column += 1) {
-    const left = samples[column * 2] || 0
-    const right = samples[column * 2 + 1] || 0
-    top += brailleCharacter(left, right, 0)
-    bottom += brailleCharacter(left, right, 4)
-  }
-  return [top, bottom] as const
+  const barCount = Math.max(1, Math.floor((width + 1) / 2))
+  const samples = resampleSpectrumBins(bins, barCount)
+  const heights = samples.map((value) => Math.pow(clamp(value), 0.85) * 16)
+  const top = heights.map((height) => blockForUnits(Math.max(0, height - 8))).join(' ')
+  const bottom = heights.map((height) => blockForUnits(Math.min(8, height))).join(' ')
+  return [top.padEnd(width), bottom.padEnd(width)] as const
 }
