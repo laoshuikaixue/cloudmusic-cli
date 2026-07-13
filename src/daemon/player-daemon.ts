@@ -217,10 +217,17 @@ export class PlayerDaemon {
   }
 
   async resume() {
-    if (this.state !== 'paused') return this.status()
-    await this.pipeline.resume()
-    this.state = 'playing'
-    void this.smtc.sync(this.status())
+    if (this.state === 'paused') {
+      await this.pipeline.resume()
+      this.state = 'playing'
+      void this.smtc.sync(this.status())
+      return this.status()
+    }
+    if (this.state === 'idle' || this.state === 'stopped' || this.state === 'error') {
+      const song = this.song
+      if (!song) return this.status()
+      await this.startSong(song)
+    }
     return this.status()
   }
 
