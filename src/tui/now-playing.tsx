@@ -5,6 +5,7 @@ import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
 import { getPlayerLayout } from './layout.js'
 import { getWaitingDots, interpolateWordGraphemes, mixHexColors } from './lyric-highlight.js'
+import { renderBrailleSpectrum, smoothSpectrumBins } from './spectrum-visualizer.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -190,19 +191,16 @@ const songLabel = (song: Song) => {
 }
 
 const Spectrum = ({ frame, width }: { frame: SpectrumFrame; width: number }) => {
-  const characters = ' ▁▂▃▄▅▆▇█'
   const usableWidth = Math.max(12, width)
-  const bars = useMemo(() => {
-    const values: number[] = []
-    for (let index = 0; index < usableWidth; index += 1) {
-      const sourceIndex = Math.floor((index / usableWidth) * frame.bins.length)
-      values.push(frame.bins[sourceIndex] || 0)
-    }
-    return values
-      .map((value) => characters[Math.min(characters.length - 1, Math.round(value * 8))])
-      .join('')
+  const lines = useMemo(() => {
+    return renderBrailleSpectrum(frame.bins, usableWidth)
   }, [frame, usableWidth])
-  return <Text color={process.env.NO_COLOR ? undefined : 'cyan'}>{bars}</Text>
+  return (
+    <Box flexDirection="column">
+      <Text color={process.env.NO_COLOR ? undefined : 'white'}>{lines[0]}</Text>
+      <Text color={process.env.NO_COLOR ? undefined : 'white'}>{lines[1]}</Text>
+    </Box>
+  )
 }
 
 export const NowPlaying = () => {
@@ -262,6 +260,11 @@ export const NowPlaying = () => {
   const seekTimer = useRef<NodeJS.Timeout | undefined>(undefined)
   const seekInFlight = useRef(false)
   const completeExitInProgress = useRef(false)
+  const spectrumTarget = useRef<SpectrumFrame>({
+    position: 0,
+    bins: new Array(64).fill(0),
+    peak: 0,
+  })
   const lyricClockSample = useRef({
     position: 0,
     receivedAt: Date.now(),
@@ -274,6 +277,13 @@ export const NowPlaying = () => {
     const previousSample = lyricClockSample.current
     const sameSong = previousSample.songId === nextStatus.song?.id
     const positionJump = Math.abs(nextStatus.position - previousSample.position) > 0.5
+    if (!sameSong) {
+      spectrumTarget.current = {
+        position: nextStatus.position,
+        bins: new Array(64).fill(0),
+        peak: 0,
+      }
+    }
     lyricClockSample.current = {
       position: nextStatus.position,
       receivedAt: Date.now(),
@@ -299,6 +309,27 @@ export const NowPlaying = () => {
       setLyricVisualPosition((current) =>
         Math.abs(current - position) < 0.001 ? current : position,
       )
+    }, 33)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const target = spectrumTarget.current
+      const currentStatus = statusRef.current
+      const synchronized = Math.abs(target.position - currentStatus.position) < 0.4
+      const desiredBins =
+        currentStatus.state === 'playing' && synchronized
+          ? target.bins
+          : new Array(target.bins.length).fill(0)
+      setSpectrum((current) => {
+        const bins = smoothSpectrumBins(current.bins, desiredBins)
+        if (bins.every((value, index) => Math.abs(value - (current.bins[index] || 0)) < 0.001)) {
+          return current
+        }
+        const peak = bins.reduce((maximum, value) => Math.max(maximum, value), 0)
+        return { position: target.position, bins, peak }
+      })
     }, 33)
     return () => clearInterval(timer)
   }, [])
@@ -406,7 +437,7 @@ export const NowPlaying = () => {
                 updateStatus(incoming)
               }
             }
-            if (event.event === 'spectrum') setSpectrum(event.data as SpectrumFrame)
+            if (event.event === 'spectrum') spectrumTarget.current = event.data as SpectrumFrame
           },
           () => {
             if (!disposed) reconnectTimer = setTimeout(() => void connectSubscription(), 500)
@@ -1904,7 +1935,6 @@ export const NowPlaying = () => {
         flexDirection="column"
         flexGrow={playerLayout.expanded ? 1 : 0}
         justifyContent={playerLayout.expanded ? 'center' : 'flex-start'}
-        gap={playerLayout.mainGap}
       >
         <Box marginTop={playerLayout.expanded ? 0 : 1} paddingX={2} flexDirection="column">
           <Text dimColor>
@@ -1944,14 +1974,6 @@ export const NowPlaying = () => {
             <Text dimColor>{status.nextLyricLine?.text || ' '}</Text>
           </Box>
         </Box>
-
-        <Box marginTop={playerLayout.expanded ? 0 : 1} paddingX={2} flexDirection="column">
-          <Box justifyContent="space-between">
-            <Text dimColor>SPECTRUM</Text>
-            <Text dimColor>48 kHz · PCM</Text>
-          </Box>
-          <Spectrum frame={spectrum} width={playerLayout.spectrumWidth} />
-        </Box>
       </Box>
 
       <Box flexDirection="column" flexShrink={0}>
@@ -1961,6 +1983,13 @@ export const NowPlaying = () => {
             {status.error ? `! ${status.error}` : `› ${message}`}
           </Text>
           <Text dimColor>Q 退出界面 · X 彻底退出并关闭播放</Text>
+        </Box>
+        <Box marginTop={1} paddingX={1} flexDirection="column">
+          <Box justifyContent="space-between">
+            <Text dimColor>SPECTRUM</Text>
+            <Text dimColor>48 kHz · PCM</Text>
+          </Box>
+          <Spectrum frame={spectrum} width={playerLayout.spectrumWidth} />
         </Box>
       </Box>
     </Box>

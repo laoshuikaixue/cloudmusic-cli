@@ -6,7 +6,6 @@ describe('responsive player layout', () => {
     expect(getPlayerLayout(90, 26)).toEqual({
       expanded: false,
       height: undefined,
-      mainGap: 0,
       progressWidth: 60,
       spectrumWidth: 82,
     })
@@ -16,7 +15,6 @@ describe('responsive player layout', () => {
     expect(getPlayerLayout(200, 50)).toEqual({
       expanded: true,
       height: 50,
-      mainGap: 6,
       progressWidth: 170,
       spectrumWidth: 192,
     })
