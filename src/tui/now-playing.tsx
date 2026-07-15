@@ -3,8 +3,9 @@ import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
 import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
-import { getPlayerLayout } from './layout.js'
+import { getPlayerLayout, renderProgressBar } from './layout.js'
 import {
+  getLyricLineTransition,
   getSustainGlowIntensity,
   getWaitingCircles,
   interpolateWordGraphemes,
@@ -142,12 +143,14 @@ const TimedLyricLine = ({
   waiting = false,
   waitingUntil = 0,
   placeholderAlignRight = false,
+  emphasis = 1,
 }: {
   line?: LyricLine
   position: number
   waiting?: boolean
   waitingUntil?: number
   placeholderAlignRight?: boolean
+  emphasis?: number
 }) => {
   if (!line) {
     const circles = waiting ? getWaitingCircles(position, waitingUntil) : []
@@ -184,10 +187,12 @@ const TimedLyricLine = ({
     )
   }
   const prefix = line.isBackground ? '↳ ' : line.isDuet ? '↔ ' : ''
+  const contextColor = '#64748b'
+  const lineColor = line.isBackground ? '#e879f9' : '#22d3ee'
   if (!line.words?.length) {
     return (
       <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
-        <Text bold color={line.isBackground ? 'magenta' : 'cyan'}>
+        <Text bold color={mixHexColors(contextColor, lineColor, emphasis)}>
           {prefix}
           {line.text}
         </Text>
@@ -197,12 +202,12 @@ const TimedLyricLine = ({
   return (
     <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
       <Text bold>
-        <Text color={line.isBackground ? 'magenta' : 'cyan'}>{prefix}</Text>
+        <Text color={mixHexColors(contextColor, lineColor, emphasis)}>{prefix}</Text>
         {line.words.flatMap((word, wordIndex) =>
           interpolateWordGraphemes(word.text, word.startTime, word.endTime, position).map(
             (grapheme, graphemeIndex) => {
-              const inactiveColor = '#64748b'
-              const activeColor = line.isBackground ? '#e879f9' : '#22d3ee'
+              const inactiveColor = '#94a3b8'
+              const activeColor = lineColor
               const baseColor =
                 grapheme.phase === 'completed'
                   ? activeColor
@@ -217,7 +222,10 @@ const TimedLyricLine = ({
                 ? mixHexColors(baseColor, '#ffffff', Math.min(0.78, glow * 0.78))
                 : baseColor
               return (
-                <Text key={`${word.startTime}-${wordIndex}-${graphemeIndex}`} color={color}>
+                <Text
+                  key={`${word.startTime}-${wordIndex}-${graphemeIndex}`}
+                  color={mixHexColors(contextColor, color, emphasis)}
+                >
                   {grapheme.text}
                 </Text>
               )
@@ -229,9 +237,20 @@ const TimedLyricLine = ({
   )
 }
 
-const ContextLyricLine = ({ line }: { line: LyricLine }) => (
+const ContextLyricLine = ({
+  line,
+  emphasis = 0,
+  emphasisColor = '#22d3ee',
+}: {
+  line: LyricLine
+  emphasis?: number
+  emphasisColor?: string
+}) => (
   <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
-    <Text color={process.env.NO_COLOR ? undefined : '#64748b'}>
+    <Text
+      bold={emphasis > 0.001}
+      color={process.env.NO_COLOR ? undefined : mixHexColors('#64748b', emphasisColor, emphasis)}
+    >
       {line.isDuet ? '↔ ' : ''}
       {line.text}
     </Text>
@@ -1559,24 +1578,32 @@ export const NowPlaying = () => {
 
   const artists = status.song?.artists.map((artist) => artist.name).join(' / ') || '—'
   const playerLayout = getPlayerLayout(terminalWidth, terminalHeight)
+  const visiblePreviousLyricLines = status.previousLyricLines?.slice(
+    playerLayout.expanded ? -2 : -1,
+  )
+  const visibleUpcomingLyricLines = status.upcomingLyricLines?.slice(
+    0,
+    playerLayout.expanded ? 3 : 1,
+  )
+  const currentLineEntrance = status.currentLyricLine
+    ? getLyricLineTransition(lyricVisualPosition, status.currentLyricLine.time)
+    : 0
+  const nextLineEntrance = status.nextLyricLine
+    ? getLyricLineTransition(lyricVisualPosition, status.nextLyricLine.time)
+    : 0
+  const currentLineEmphasis = status.currentLyricLine
+    ? Math.min(currentLineEntrance, status.nextLyricLine ? 1 - nextLineEntrance : 1)
+    : 0
   const progressWidth = playerLayout.progressWidth
-  const progress = status.duration ? Math.max(0, Math.min(1, status.position / status.duration)) : 0
-  const filled = Math.round(progress * progressWidth)
-  const progressFilled = '━'.repeat(filled)
-  const progressEmpty = '─'.repeat(progressWidth - filled)
+  const visualPosition = Math.max(0, Math.min(status.duration || Infinity, lyricVisualPosition))
+  const progress = status.duration ? visualPosition / status.duration : 0
+  const progressBar = renderProgressBar(progress, progressWidth)
   const modeLabel: Record<PlaybackMode, string> = {
     sequence: '顺序播放',
     'repeat-one': '单曲循环',
     shuffle: '随机播放',
   }
-  const sourceLabel =
-    status.source === 'official'
-      ? '网易云官方'
-      : status.source === 'unblock'
-        ? `解灰 · ${status.sourceName || 'auto'}`
-        : status.source === 'trial'
-          ? '官方试听'
-          : '等待音源'
+  const sourceLabel = status.source === 'unblock' ? `解灰 · ${status.sourceName || 'auto'}` : null
   const stateIcon =
     status.state === 'playing'
       ? '▶'
@@ -1975,24 +2002,41 @@ export const NowPlaying = () => {
           <Text bold color="white">
             <Text color="red">{stateIcon}</Text> {status.song?.name || '选择一首歌开始播放'}
           </Text>
-          <Text color={status.liked ? 'red' : 'gray'}>{status.liked ? '♥' : '♡'}</Text>
+          <Text color={status.liked ? 'red' : 'gray'}>
+            {status.liked && process.env.NO_COLOR ? '♥' : '♡'}
+          </Text>
         </Box>
         <Text dimColor>
           {artists} · {status.song?.album.name || '暂无专辑信息'}
         </Text>
         <Box marginTop={1}>
-          <Text dimColor>{formatTime(status.position)} </Text>
-          <Text color="red">{progressFilled}</Text>
-          <Text dimColor>{progressEmpty}</Text>
+          <Text dimColor>{formatTime(visualPosition)} </Text>
+          <Text color={process.env.NO_COLOR ? undefined : '#ef4444'}>
+            {(process.env.NO_COLOR ? '━' : '─').repeat(progressBar.completedCells)}
+          </Text>
+          {progressBar.hasTransition ? (
+            <Text
+              color={
+                process.env.NO_COLOR
+                  ? undefined
+                  : mixHexColors('#475569', '#ef4444', progressBar.transitionIntensity)
+              }
+            >
+              {process.env.NO_COLOR ? '╾' : '─'}
+            </Text>
+          ) : null}
+          <Text color={process.env.NO_COLOR ? undefined : '#475569'}>
+            {'─'.repeat(progressBar.remainingCells)}
+          </Text>
           <Text dimColor> {formatTime(status.duration)}</Text>
         </Box>
         <Text dimColor>
-          {modeLabel[status.mode]} · 音量 {status.volume}% · {status.quality || '未知音质'} ·{' '}
-          {sourceLabel}
+          {modeLabel[status.mode]} · 音量 {status.volume}% · {status.quality || '未知音质'}
+          {sourceLabel ? ` · ${sourceLabel}` : ''}
         </Text>
         <Text dimColor>
           {status.queueContext?.name || '临时队列'} · {Math.max(0, status.queueIndex + 1)} /{' '}
-          {status.queueLength} · 听歌上报 {status.scrobbleEnabled ? status.scrobbleMode : '关闭'}
+          {status.queueLength}
         </Text>
       </Box>
 
@@ -2004,22 +2048,21 @@ export const NowPlaying = () => {
           flexGrow={playerLayout.expanded ? 1 : 0}
           justifyContent={playerLayout.expanded ? 'space-around' : 'flex-start'}
         >
-          <Text dimColor>
-            LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()} ·{' '}
-            {status.lyricSource === 'amll'
-              ? 'AMLL'
-              : status.lyricSource === 'qqmusic'
-                ? 'QQ MUSIC'
-                : 'NETEASE'}
-            {status.lyricsUpgraded ? ' · UPGRADED' : ''}
-          </Text>
-          {status.previousLyricLines?.slice(playerLayout.expanded ? -2 : -1).map((line) => (
-            <ContextLyricLine key={`previous-${line.time}-${line.text}`} line={line} />
+          <Text dimColor>LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()}</Text>
+          {visiblePreviousLyricLines?.map((line, index) => (
+            <ContextLyricLine
+              key={`previous-${line.time}-${line.text}`}
+              line={line}
+              emphasis={
+                index === visiblePreviousLyricLines.length - 1 ? 1 - currentLineEntrance : 0
+              }
+            />
           ))}
           <Box flexDirection="column" marginY={playerLayout.expanded ? 0 : 1}>
             <TimedLyricLine
               line={status.currentLyricLine}
               position={lyricVisualPosition}
+              emphasis={currentLineEmphasis}
               waiting={!status.currentLyricLine && Boolean(status.nextLyricLine)}
               waitingUntil={status.nextLyricLine?.time || 0}
               placeholderAlignRight={Boolean(status.nextLyricLine?.isDuet)}
@@ -2029,7 +2072,9 @@ export const NowPlaying = () => {
                 width="100%"
                 justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
               >
-                <Text color="yellow">{status.currentLyricLine.translation}</Text>
+                <Text color={mixHexColors('#64748b', '#facc15', currentLineEmphasis)}>
+                  {status.currentLyricLine.translation}
+                </Text>
               </Box>
             ) : null}
             {status.backgroundLyricLines?.slice(0, 1).map((line) => (
@@ -2037,11 +2082,17 @@ export const NowPlaying = () => {
                 key={`${line.time}-${line.text}`}
                 line={line}
                 position={lyricVisualPosition}
+                emphasis={getLyricLineTransition(lyricVisualPosition, line.time)}
               />
             ))}
           </Box>
-          {status.upcomingLyricLines?.slice(0, playerLayout.expanded ? 3 : 1).map((line) => (
-            <ContextLyricLine key={`upcoming-${line.time}-${line.text}`} line={line} />
+          {visibleUpcomingLyricLines?.map((line, index) => (
+            <ContextLyricLine
+              key={`upcoming-${line.time}-${line.text}`}
+              line={line}
+              emphasis={index === 0 ? nextLineEntrance : 0}
+              emphasisColor={line.words?.length ? '#94a3b8' : '#22d3ee'}
+            />
           ))}
         </Box>
       </Box>

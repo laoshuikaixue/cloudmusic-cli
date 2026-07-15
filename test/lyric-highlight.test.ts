@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   easeInOutSine,
+  getLyricLineTransition,
   getSustainGlowIntensity,
   getWaitingCircles,
   interpolateWordGraphemes,
@@ -37,6 +38,15 @@ describe('lyric character highlight', () => {
     expect(mixHexColors('#000000', '#ffffff', 0.5)).toBe('#808080')
     expect(mixHexColors('#475569', '#22d3ee', 0)).toBe('#475569')
     expect(mixHexColors('#475569', '#22d3ee', 1)).toBe('#22d3ee')
+  })
+
+  it('crossfades lyric lines symmetrically around the next line timestamp', () => {
+    expect(getLyricLineTransition(9.8, 10)).toBe(0)
+    expect(getLyricLineTransition(9.9, 10)).toBeCloseTo(0.1464, 4)
+    expect(getLyricLineTransition(10, 10)).toBeCloseTo(0.5)
+    expect(getLyricLineTransition(10.1, 10)).toBeCloseTo(0.8536, 4)
+    expect(getLyricLineTransition(10.2, 10)).toBe(1)
+    expect(getLyricLineTransition(9.9, 10) + getLyricLineTransition(10.1, 10)).toBeCloseTo(1)
   })
 
   it('brightens three solid waiting circles sequentially before the first lyric line', () => {

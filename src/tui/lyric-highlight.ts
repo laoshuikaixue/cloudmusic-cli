@@ -14,6 +14,11 @@ export interface WaitingCircle {
   opacity: number
 }
 
+export interface LyricContentCrossfade {
+  outgoing: number
+  incoming: number
+}
+
 interface TimedLyricWord {
   text: string
   startTime: number
@@ -31,6 +36,41 @@ export const easeInOutSine = (value: number) => {
   const progress = clamp(value)
   if (progress === 0 || progress === 1) return progress
   return -(Math.cos(Math.PI * progress) - 1) / 2
+}
+
+/**
+ * 在歌词时间点前后生成对称的行切换进度，让相邻行可以使用同一条曲线交叉淡入淡出。
+ * 进度完全由播放位置决定，因此暂停、跳转和恢复播放时不会出现动画漂移。
+ */
+export const getLyricLineTransition = (position: number, lineTime: number, duration = 0.4) => {
+  const safeDuration = Math.max(0.05, duration)
+  const transitionStart = lineTime - safeDuration / 2
+  return easeInOutSine((position - transitionStart) / safeDuration)
+}
+
+/**
+ * 在同一终端行内更换内容时，先把旧内容淡到不可见，再淡入新内容，
+ * 避免字符在仍然明亮时直接替换。
+ */
+export const getLyricContentCrossfade = (transition: number): LyricContentCrossfade => ({
+  outgoing: 1 - easeInOutSine(clamp(transition) * 2),
+  incoming: easeInOutSine((clamp(transition) - 0.5) * 2),
+})
+
+/**
+ * 为只在自身时间区间内可见的 TTML 伴唱生成完整的淡入、淡出包络。
+ */
+export const getLyricLinePresence = (
+  position: number,
+  startTime: number,
+  endTime: number,
+  duration = 0.3,
+) => {
+  const safeDuration = Math.max(0.05, duration)
+  const entrance = easeInOutSine((position - startTime) / safeDuration)
+  if (!Number.isFinite(endTime) || endTime <= startTime) return entrance
+  const exit = easeInOutSine((endTime - position) / safeDuration)
+  return Math.min(entrance, exit)
 }
 
 const hexChannel = (value: string, offset: number) =>
