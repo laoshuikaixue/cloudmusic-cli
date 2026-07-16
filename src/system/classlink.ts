@@ -11,7 +11,7 @@ import { VERSION } from '../version.js'
 
 const PROTOCOL_VERSION = 1
 const CONNECTOR_VERSION = '1.0.0'
-const DEFAULT_PORT = 50064
+const DEFAULT_PORT = 38973
 const ANCHOR_INTERVAL_MS = 1000
 const HEARTBEAT_INTERVAL_MS = 10_000
 const REQUEST_TIMEOUT_MS = 5000
@@ -33,6 +33,11 @@ interface CoverPayload {
   hash: string
   mimeType: string
   data: Buffer
+}
+
+interface ClassLinkResponse {
+  message?: string
+  coverRequired?: boolean
 }
 
 const toMilliseconds = (seconds: number) => Math.max(0, Math.round(seconds * 1000))
@@ -276,8 +281,9 @@ export class ClassLinkBridge {
       while (this.hasPendingWork()) {
         if (this.stateDirty) {
           const revision = this.stateRevision
-          await this.postJson('/v1/state', this.buildStatePayload())
+          const response = await this.postJson('/v1/state', this.buildStatePayload())
           if (revision === this.stateRevision) this.stateDirty = false
+          if (response?.coverRequired === true && this.currentCover) this.coverDirty = true
           this.markConnected()
           continue
         }
@@ -408,7 +414,7 @@ export class ClassLinkBridge {
   }
 
   private async postJson(path: string, value: unknown) {
-    await this.request(path, {
+    return this.request(path, {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(value),
     })
@@ -429,7 +435,7 @@ export class ClassLinkBridge {
     })
   }
 
-  private async request(path: string, init: RequestInit) {
+  private async request(path: string, init: RequestInit): Promise<ClassLinkResponse> {
     const response = await fetch(`http://127.0.0.1:${this.config.port}${path}`, {
       method: 'POST',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -439,7 +445,9 @@ export class ClassLinkBridge {
         ...init.headers,
       },
     })
-    if (!response.ok) throw new Error(`ClassLink HTTP ${response.status}`)
+    const body = (await response.json()) as ClassLinkResponse
+    if (!response.ok) throw new Error(body.message || `ClassLink HTTP ${response.status}`)
+    return body
   }
 
   private refreshCover(snapshot: ClassLinkSnapshot) {

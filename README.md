@@ -77,8 +77,8 @@ Windows、macOS 和 Linux 都必须确保 `ffmpeg` 与 `mpv` 位于 `PATH`。也
 
 ClassIsland 联动需要安装 `ClassLink` 插件。复制插件设置页中的连接令牌后运行
 `ncm classlink connect`，在隐藏输入提示中粘贴令牌即可。连接令牌与 Cookie 一样保存在敏感配置文件中，
-不会出现在 `config.get`、日志或 JSON 响应里。默认端口是 `50064`，自定义端口可使用
-`ncm classlink connect --port 50065`。也可以在 TUI 中打开“设置 → ClassLink”，直接配置启用状态、
+不会出现在 `config.get`、日志或 JSON 响应里。默认端口是 `38973`，自定义端口可使用
+`ncm classlink connect --port 38974`。也可以在 TUI 中打开“设置 → ClassLink”，直接配置启用状态、
 监听端口和连接令牌。
 
 ## 使用

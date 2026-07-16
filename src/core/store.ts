@@ -12,7 +12,7 @@ const defaultConfig: AppConfig = {
   binaries: {},
   scrobble: { enabled: true, mode: 'ncbl', configured: false },
   smtc: { enabled: process.platform === 'win32' },
-  classLink: { enabled: false, port: 50064 },
+  classLink: { enabled: false, port: 38973 },
   lyrics: {
     upgrade: true,
     enableTtml: true,

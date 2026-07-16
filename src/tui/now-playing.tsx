@@ -1897,7 +1897,7 @@ export const NowPlaying = () => {
       ) : null}
       {mode === 'classlink-port' ? (
         <Text>
-          ClassLink 端口 › <Text color="cyan">{shownInput || '50064'}█</Text>
+          ClassLink 端口 › <Text color="cyan">{shownInput || '38973'}█</Text>
           <Text dimColor> 范围 1024-65535，Enter 保存，Esc 取消</Text>
         </Text>
       ) : null}
@@ -2164,7 +2164,7 @@ export const NowPlaying = () => {
             </Text>
           ))}
           <Text dimColor>
-            地址：{classLinkStatus?.endpoint || 'http://127.0.0.1:50064'} ·{' '}
+            地址：{classLinkStatus?.endpoint || 'http://127.0.0.1:38973'} ·{' '}
             {classLinkStatus?.connected
               ? 'ClassIsland 已连接'
               : classLinkStatus?.lastError || '尚未建立连接'}

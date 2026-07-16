@@ -124,4 +124,72 @@ describe('ClassLink lyric serialization', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
+
+  it('resends the current cover when the receiver reports that it is missing', async () => {
+    const cover = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    let coverUploads = 0
+    const server = createServer((request, response) => {
+      if (request.method === 'GET' && request.url?.startsWith('/cover.jpg')) {
+        response.writeHead(200, {
+          'Content-Type': 'image/jpeg',
+          'Content-Length': String(cover.length),
+        })
+        response.end(cover)
+        return
+      }
+
+      request.resume()
+      request.on('end', () => {
+        if (request.url?.startsWith('/v1/cover?')) coverUploads += 1
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(
+          request.url === '/v1/state'
+            ? '{"message":"ok","coverRequired":true}'
+            : '{"message":"ok"}',
+        )
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    const song = {
+      id: 1,
+      name: 'Song',
+      artists: [{ id: 1, name: 'Artist' }],
+      album: { id: 1, name: 'Album', cover: `http://127.0.0.1:${port}/cover.jpg` },
+      duration: 180000,
+    }
+    const bridge = new ClassLinkBridge()
+    try {
+      bridge.configure({ enabled: true, port }, 'local-test-token')
+      bridge.sync({
+        song,
+        trackRevision: 1,
+        lyricRevision: 1,
+        lyrics: { format: 'lrc', source: 'netease', upgraded: false, lines: [] },
+        state: 'playing',
+        positionMs: 1000,
+      })
+      await waitFor(() => coverUploads >= 1)
+
+      bridge.sync({
+        song,
+        trackRevision: 1,
+        lyricRevision: 2,
+        lyrics: {
+          format: 'lrc',
+          source: 'netease',
+          upgraded: false,
+          lines: [{ time: 1, endTime: 2, text: 'line' }],
+        },
+        state: 'playing',
+        positionMs: 2000,
+      })
+      await waitFor(() => coverUploads >= 2)
+
+      expect(coverUploads).toBe(2)
+    } finally {
+      bridge.stop()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
 })
