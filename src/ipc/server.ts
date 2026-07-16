@@ -70,15 +70,24 @@ export const runDaemonServer = async () => {
 
   const eventTimer = setInterval(() => {
     if (!subscribers.size) return
+    const writableSubscribers = [...subscribers].filter(
+      (socket) => !socket.destroyed && socket.writable && !socket.writableNeedDrain,
+    )
+    if (!writableSubscribers.length) return
     const status = JSON.stringify({ event: 'status', data: daemon.status() })
-    for (const socket of subscribers) {
+    for (const socket of writableSubscribers) {
       writeSocket(socket, `${status}\n`)
-      void Promise.resolve(daemon.dispatch('spectrum'))
-        .then((data) => {
-          writeSocket(socket, `${JSON.stringify({ event: 'spectrum', data })}\n`)
-        })
-        .catch(() => undefined)
     }
+    void Promise.resolve(daemon.dispatch('spectrum'))
+      .then((data) => {
+        const spectrum = `${JSON.stringify({ event: 'spectrum', data })}\n`
+        for (const socket of writableSubscribers) {
+          if (!socket.writableNeedDrain) {
+            writeSocket(socket, spectrum)
+          }
+        }
+      })
+      .catch(() => undefined)
   }, 100)
 
   const close = async () => {

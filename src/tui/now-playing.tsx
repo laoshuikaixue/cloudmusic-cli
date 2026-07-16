@@ -16,6 +16,7 @@ import {
   renderSpectrumBars,
   smoothSpectrumBins,
 } from './spectrum-visualizer.js'
+import { canRenderTerminalFrame, TUI_FRAME_INTERVAL_MS } from './rendering.js'
 import type {
   AppConfig,
   CloudLibrary,
@@ -364,30 +365,28 @@ export const NowPlaying = () => {
       duration: nextStatus.duration,
       songId: nextStatus.song?.id,
     }
+    statusRef.current = nextStatus
+    if (!canRenderTerminalFrame(process.stdout)) return
     setLyricVisualPosition((current) =>
       !sameSong || positionJump || nextStatus.state !== 'playing'
         ? nextStatus.position
         : Math.max(current, nextStatus.position),
     )
-    statusRef.current = nextStatus
     setStatus(nextStatus)
   }
 
   useEffect(() => {
     const timer = setInterval(() => {
+      if (!canRenderTerminalFrame(process.stdout)) return
       const sample = lyricClockSample.current
-      if (sample.state !== 'playing') return
-      const elapsed = Math.min(0.14, Math.max(0, (Date.now() - sample.receivedAt) / 1000))
-      const position = Math.min(sample.duration || Infinity, sample.position + elapsed)
-      setLyricVisualPosition((current) =>
-        Math.abs(current - position) < 0.001 ? current : position,
-      )
-    }, 33)
-    return () => clearInterval(timer)
-  }, [])
+      if (sample.state === 'playing') {
+        const elapsed = Math.min(0.14, Math.max(0, (Date.now() - sample.receivedAt) / 1000))
+        const position = Math.min(sample.duration || Infinity, sample.position + elapsed)
+        setLyricVisualPosition((current) =>
+          Math.abs(current - position) < 0.001 ? current : position,
+        )
+      }
 
-  useEffect(() => {
-    const timer = setInterval(() => {
       const target = spectrumTarget.current
       const currentStatus = statusRef.current
       const synchronized = isSpectrumFrameSynchronized(
@@ -408,7 +407,7 @@ export const NowPlaying = () => {
         const peak = bins.reduce((maximum, value) => Math.max(maximum, value), 0)
         return { position: target.position, bins, peak, generation: target.generation }
       })
-    }, 33)
+    }, TUI_FRAME_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [])
 
@@ -471,6 +470,7 @@ export const NowPlaying = () => {
   const refreshQueue = async () => {
     try {
       const result = await callDaemon<QueueSnapshot>('queue.list')
+      if (!canRenderTerminalFrame(process.stdout)) return
       setQueue(result)
       setQueueIndex((index) => Math.max(0, Math.min(index, result.songs.length - 1)))
     } catch (error) {
@@ -494,7 +494,13 @@ export const NowPlaying = () => {
       setTerminalWidth(process.stdout.columns || 80)
       setTerminalHeight(process.stdout.rows || 24)
     }
+    const renderLatestAfterDrain = () => {
+      const latest = statusRef.current
+      setStatus(latest)
+      setLyricVisualPosition(latest.position)
+    }
     process.stdout.on('resize', resize)
+    process.stdout.on('drain', renderLatestAfterDrain)
     void verifyAccount()
     void refreshQueue()
     const queueTimer = setInterval(() => void refreshQueue(), 2000)
@@ -536,6 +542,7 @@ export const NowPlaying = () => {
     return () => {
       disposed = true
       process.stdout.off('resize', resize)
+      process.stdout.off('drain', renderLatestAfterDrain)
       clearInterval(queueTimer)
       unsubscribe?.()
       if (reconnectTimer) clearTimeout(reconnectTimer)

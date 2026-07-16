@@ -661,14 +661,24 @@ const main = async () => {
   if (process.argv.length === 2) {
     await ensureDaemon()
     if (!process.stdout.isTTY) return output(await requestDaemon<PlaybackStatus>('status'))
-    const [{ default: React }, { render }, { NowPlaying }] = await Promise.all([
+    const [
+      { default: React },
+      { render },
+      { NowPlaying },
+      { TUI_INCREMENTAL_RENDERING, TUI_MAX_FPS },
+    ] = await Promise.all([
       import('react'),
       import('ink'),
       import('./tui/now-playing.js'),
+      import('./tui/rendering.js'),
     ])
     process.stdout.write('\u001b[?1049h\u001b[2J\u001b[3J\u001b[H\u001b[?25l')
     try {
-      const app = render(React.createElement(NowPlaying), { exitOnCtrlC: true })
+      const app = render(React.createElement(NowPlaying), {
+        exitOnCtrlC: true,
+        incrementalRendering: TUI_INCREMENTAL_RENDERING,
+        maxFps: TUI_MAX_FPS,
+      })
       await app.waitUntilExit()
     } finally {
       process.stdout.write('\u001b[?25h\u001b[?1049l')
