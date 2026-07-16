@@ -203,6 +203,15 @@ export interface PlaybackStatus {
   error?: string
 }
 
+export interface ClassLinkStatus {
+  enabled: boolean
+  configured: boolean
+  connected: boolean
+  endpoint: string
+  lastSuccessAt?: number
+  lastError?: string
+}
+
 export interface AppConfig {
   quality: string
   volume: number
@@ -223,6 +232,10 @@ export interface AppConfig {
   }
   smtc: {
     enabled: boolean
+  }
+  classLink: {
+    enabled: boolean
+    port: number
   }
   lyrics: {
     upgrade: boolean

@@ -12,6 +12,7 @@ const defaultConfig: AppConfig = {
   binaries: {},
   scrobble: { enabled: true, mode: 'ncbl', configured: false },
   smtc: { enabled: process.platform === 'win32' },
+  classLink: { enabled: false, port: 50064 },
   lyrics: {
     upgrade: true,
     enableTtml: true,
@@ -44,6 +45,7 @@ const writeJson = async (file: string, value: unknown, sensitive = false) => {
 export class AppStore {
   private config: AppConfig = structuredClone(defaultConfig)
   private cookie = ''
+  private classLinkToken = ''
 
   async load() {
     const stored = await readJson<Partial<AppConfig>>(paths.configFile, {})
@@ -54,14 +56,16 @@ export class AppStore {
       binaries: { ...defaultConfig.binaries, ...stored.binaries },
       scrobble: { ...defaultConfig.scrobble, ...stored.scrobble },
       smtc: { ...defaultConfig.smtc, ...stored.smtc },
+      classLink: { ...defaultConfig.classLink, ...stored.classLink },
       lyrics: { ...defaultConfig.lyrics, ...stored.lyrics },
     }
     // 早期开发版没有设置页，旧配置中的 enabled=false 只是旧默认值，不代表用户选择。
     if (stored.scrobble && stored.scrobble.configured === undefined) {
       this.config.scrobble.enabled = true
     }
-    const auth = await readJson<{ cookie?: string }>(paths.authFile, {})
+    const auth = await readJson<{ cookie?: string; classLinkToken?: string }>(paths.authFile, {})
     this.cookie = auth.cookie || ''
+    this.classLinkToken = auth.classLinkToken || ''
   }
 
   getConfig() {
@@ -76,6 +80,7 @@ export class AppStore {
       binaries: { ...this.config.binaries, ...patch.binaries },
       scrobble: { ...this.config.scrobble, ...patch.scrobble },
       smtc: { ...this.config.smtc, ...patch.smtc },
+      classLink: { ...this.config.classLink, ...patch.classLink },
       lyrics: { ...this.config.lyrics, ...patch.lyrics },
     }
     await writeJson(paths.configFile, this.config)
@@ -88,11 +93,24 @@ export class AppStore {
 
   async setCookie(cookie: string) {
     this.cookie = cookie
-    await writeJson(paths.authFile, { cookie }, true)
+    await this.saveAuth()
   }
 
   async clearCookie() {
     await this.setCookie('')
+  }
+
+  getClassLinkToken() {
+    return this.classLinkToken
+  }
+
+  async setClassLinkToken(token: string) {
+    this.classLinkToken = token
+    await this.saveAuth()
+  }
+
+  async clearClassLinkToken() {
+    await this.setClassLinkToken('')
   }
 
   loadSession() {
@@ -109,5 +127,13 @@ export class AppStore {
 
   saveHistory(history: HistoryEntry[]) {
     return writeJson(paths.historyFile, history.slice(0, 500))
+  }
+
+  private saveAuth() {
+    return writeJson(
+      paths.authFile,
+      { cookie: this.cookie, classLinkToken: this.classLinkToken },
+      true,
+    )
   }
 }

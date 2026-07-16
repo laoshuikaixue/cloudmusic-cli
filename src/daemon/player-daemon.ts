@@ -5,6 +5,7 @@ import { AppError } from '../core/errors.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
 import { findActiveBackgroundLyrics, getLyricContext } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
+import { ClassLinkBridge } from '../system/classlink.js'
 import { SmtcBridge, type SmtcEvent } from '../system/smtc.js'
 import { VERSION } from '../version.js'
 import type {
@@ -60,6 +61,7 @@ export class PlayerDaemon {
   private currentUrl = ''
   private sourceResolvedAt = 0
   private lyrics: LyricLine[] = []
+  private lyricRevision = 0
   private lyricResult: LyricResult = {
     lines: [],
     format: 'lrc',
@@ -75,7 +77,9 @@ export class PlayerDaemon {
   private likedSongIds = new Set<number>()
   private scrobbleTimer?: NodeJS.Timeout
   private smtcTimer?: NodeJS.Timeout
+  private classLinkTimer?: NodeJS.Timeout
   private readonly smtc = new SmtcBridge()
+  private readonly classLink = new ClassLinkBridge()
   private controlQueue: Promise<void> = Promise.resolve()
 
   private enqueueControl<T>(operation: () => Promise<T>): Promise<T> {
@@ -98,6 +102,7 @@ export class PlayerDaemon {
     if (!operation) return
     void this.enqueueControl(operation).catch((error) => {
       this.error = error instanceof Error ? error.message : String(error)
+      this.syncClassLink()
     })
   }
 
@@ -107,12 +112,14 @@ export class PlayerDaemon {
     this.queue = await this.store.loadSession()
     this.history = await this.store.loadHistory()
     if (this.queue.index >= this.queue.songs.length) this.queue.index = this.queue.songs.length - 1
+    this.classLink.configure(this.config.classLink, this.store.getClassLinkToken())
     this.pipeline.on('ended', () => {
       void this.enqueueControl(() => this.onEnded())
     })
     this.pipeline.on('error', (error: Error) => {
       this.state = 'error'
       this.error = error.message
+      this.syncClassLink()
     })
     this.scrobbleTimer = setInterval(() => {
       void this.maybeScrobble().catch(() => undefined)
@@ -124,10 +131,23 @@ export class PlayerDaemon {
     this.smtcTimer = setInterval(() => {
       void this.smtc.sync(this.status()).catch(() => undefined)
     }, 1000)
+    this.classLinkTimer = setInterval(() => this.syncClassLink(), 1000)
+    this.syncClassLink()
   }
 
   private get song() {
     return this.queue.songs[this.queue.index] || null
+  }
+
+  private syncClassLink() {
+    this.classLink.sync({
+      song: this.song,
+      trackRevision: this.cycle,
+      lyricRevision: this.lyricRevision,
+      lyrics: this.lyricResult,
+      state: this.state,
+      positionMs: this.pipeline.getPosition() * 1000,
+    })
   }
 
   private async persistQueue() {
@@ -176,6 +196,15 @@ export class PlayerDaemon {
     this.error = undefined
     this.resetPlaybackCycle()
     const cycle = this.cycle
+    this.lyricResult = {
+      lines: [],
+      format: 'lrc',
+      source: 'netease',
+      upgraded: false,
+    }
+    this.lyrics = []
+    this.lyricRevision += 1
+    this.syncClassLink()
     const [source, lyricResult] = await Promise.all([
       this.api.resolveSource(song.id, this.config),
       this.api.lyrics(song.id).catch((): LyricResult => ({
@@ -190,12 +219,16 @@ export class PlayerDaemon {
     this.sourceResolvedAt = Date.now()
     this.lyricResult = lyricResult
     this.lyrics = lyricResult.lines
+    this.lyricRevision += 1
+    this.syncClassLink()
     void this.api
       .upgradedLyrics(song, this.config, lyricResult)
       .then((upgraded) => {
         if (this.cycle !== cycle || this.song?.id !== song.id) return
         this.lyricResult = upgraded
         this.lyrics = upgraded.lines
+        this.lyricRevision += 1
+        this.syncClassLink()
       })
       .catch(() => undefined)
     await this.pipeline.start(source.url, {
@@ -207,6 +240,7 @@ export class PlayerDaemon {
     this.state = 'playing'
     await this.recordHistory(song)
     void this.smtc.sync(this.status())
+    this.syncClassLink()
   }
 
   async playSong(id: number) {
@@ -228,6 +262,7 @@ export class PlayerDaemon {
     await this.next(true).catch((error) => {
       this.state = 'error'
       this.error = error instanceof Error ? error.message : String(error)
+      this.syncClassLink()
     })
   }
 
@@ -236,6 +271,7 @@ export class PlayerDaemon {
     await this.pipeline.pause()
     this.state = 'paused'
     void this.smtc.sync(this.status())
+    this.syncClassLink()
     return this.status()
   }
 
@@ -244,6 +280,7 @@ export class PlayerDaemon {
       await this.pipeline.resume()
       this.state = 'playing'
       void this.smtc.sync(this.status())
+      this.syncClassLink()
       return this.status()
     }
     if (this.state === 'idle' || this.state === 'stopped' || this.state === 'error') {
@@ -263,6 +300,7 @@ export class PlayerDaemon {
     await this.finalizeHistory()
     this.state = 'stopped'
     void this.smtc.sync(this.status())
+    this.syncClassLink()
     return this.status()
   }
 
@@ -305,6 +343,7 @@ export class PlayerDaemon {
       await this.pipeline.seek(position)
       this.state = wasPaused ? 'paused' : 'playing'
     }
+    this.syncClassLink()
     return this.status()
   }
 
@@ -554,6 +593,8 @@ export class PlayerDaemon {
   async shutdown() {
     if (this.scrobbleTimer) clearInterval(this.scrobbleTimer)
     if (this.smtcTimer) clearInterval(this.smtcTimer)
+    if (this.classLinkTimer) clearInterval(this.classLinkTimer)
+    this.classLink.stop()
     this.smtc.stop()
     await this.pipeline.stop()
     await this.finalizeHistory()
@@ -597,6 +638,7 @@ export class PlayerDaemon {
       'library.album.play',
       'library.artist.play',
       'library.record.play',
+      'classlink.set',
     ])
     if (serializedMethods.has(method)) {
       return this.enqueueControl(() => this.dispatchInternal(method, params))
@@ -988,11 +1030,40 @@ export class PlayerDaemon {
         }
         return this.smtc.status()
       }
+      case 'classlink.status':
+        return this.classLink.status()
+      case 'classlink.set': {
+        const port =
+          params.port === undefined ? this.config.classLink.port : numberParam(params.port, 'port')
+        if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+          throw new AppError('INVALID_ARGUMENT', 'port 必须是 1024 到 65535 之间的整数')
+        }
+        const token = params.clearToken
+          ? ''
+          : params.token === undefined
+            ? this.store.getClassLinkToken()
+            : stringParam(params.token, 'token')
+        const enabled =
+          params.enabled === undefined ? this.config.classLink.enabled : Boolean(params.enabled)
+        if (enabled && !token) {
+          throw new AppError('CLASSLINK_TOKEN_MISSING', '请先配置 ClassLink 连接令牌')
+        }
+        this.config = await this.store.updateConfig({ classLink: { enabled, port } })
+        if (token !== this.store.getClassLinkToken()) {
+          if (token) await this.store.setClassLinkToken(token)
+          else await this.store.clearClassLinkToken()
+        }
+        this.classLink.configure(this.config.classLink, token)
+        this.syncClassLink()
+        return this.classLink.status()
+      }
       case 'config.get':
         return this.store.getConfig()
       case 'config.set': {
         const patch = params.patch as Partial<AppConfig>
         this.config = await this.store.updateConfig(patch || {})
+        this.classLink.configure(this.config.classLink, this.store.getClassLinkToken())
+        this.syncClassLink()
         return this.config
       }
       case 'doctor':
@@ -1037,6 +1108,7 @@ export class PlayerDaemon {
       ffmpeg,
       api: apiStatus,
       smtc: this.smtc.status(),
+      classLink: this.classLink.status(),
       paths: { config: this.store.getConfig() ? 'ready' : 'unavailable' },
     }
   }

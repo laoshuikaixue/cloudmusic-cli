@@ -19,6 +19,7 @@ import {
 import { canRenderTerminalFrame, TUI_FRAME_INTERVAL_MS } from './rendering.js'
 import type {
   AppConfig,
+  ClassLinkStatus,
   CloudLibrary,
   CollectionSummary,
   CommentPage,
@@ -50,6 +51,9 @@ type PageMode =
   | 'playlist-picker'
   | 'tracks'
   | 'settings'
+  | 'classlink'
+  | 'classlink-token'
+  | 'classlink-port'
   | 'account'
   | 'comments'
   | 'collections'
@@ -314,6 +318,8 @@ export const NowPlaying = () => {
   const [trackReturnMode, setTrackReturnMode] = useState<PageMode>('library')
   const [settingsConfig, setSettingsConfig] = useState<AppConfig | null>(null)
   const [settingsIndex, setSettingsIndex] = useState(0)
+  const [classLinkStatus, setClassLinkStatus] = useState<ClassLinkStatus | null>(null)
+  const [classLinkIndex, setClassLinkIndex] = useState(0)
   const [accountIndex, setAccountIndex] = useState(0)
   const [qrText, setQrText] = useState('')
   const [comments, setComments] = useState<MusicComment[]>([])
@@ -551,6 +557,16 @@ export const NowPlaying = () => {
       if (deleteTimer.current) clearTimeout(deleteTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (mode !== 'classlink') return
+    const timer = setInterval(() => {
+      void callDaemon<ClassLinkStatus>('classlink.status')
+        .then(setClassLinkStatus)
+        .catch(() => undefined)
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [mode])
 
   const submitSearch = async () => {
     const keywords = inputValue.trim()
@@ -1051,13 +1067,35 @@ export const NowPlaying = () => {
     }
   }
 
+  const refreshSettingsState = async () => {
+    const [config, linkStatus] = await Promise.all([
+      callDaemon<AppConfig>('config.get'),
+      callDaemon<ClassLinkStatus>('classlink.status'),
+    ])
+    setSettingsConfig(config)
+    setClassLinkStatus(linkStatus)
+    return { config, linkStatus }
+  }
+
   const openSettings = async () => {
     setMessage('正在加载设置…')
     try {
-      setSettingsConfig(await callDaemon<AppConfig>('config.get'))
+      await refreshSettingsState()
       setSettingsIndex(0)
       setMode('settings')
       setMessage('设置会立即保存并应用')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openClassLinkPage = async () => {
+    setClassLinkIndex(0)
+    setMode('classlink')
+    setMessage('正在加载 ClassLink 状态…')
+    try {
+      const { linkStatus } = await refreshSettingsState()
+      setMessage(linkStatus.connected ? 'ClassLink 已连接到 ClassIsland' : 'ClassLink 设置已加载')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -1127,8 +1165,92 @@ export const NowPlaying = () => {
         }
         await callDaemon('config.set', { patch })
       }
-      setSettingsConfig(await callDaemon<AppConfig>('config.get'))
+      await refreshSettingsState()
       setMessage('设置已保存')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const changeClassLinkSetting = async (index: number) => {
+    if (!settingsConfig || !classLinkStatus) return
+    if (index === 1) {
+      setInputValue(String(settingsConfig.classLink.port))
+      setMode('classlink-port')
+      setMessage('输入 ClassIsland 插件的监听端口')
+      return
+    }
+    if (index === 2) {
+      setInputValue('')
+      setMode('classlink-token')
+      setMessage('连接令牌只会保存到敏感配置，不会回显')
+      return
+    }
+    try {
+      if (index === 0) {
+        if (!classLinkStatus.configured && !classLinkStatus.enabled) {
+          setInputValue('')
+          setMode('classlink-token')
+          setMessage('请先输入 ClassIsland 插件生成的连接令牌')
+          return
+        }
+        setClassLinkStatus(
+          await callDaemon<ClassLinkStatus>('classlink.set', {
+            enabled: !classLinkStatus.enabled,
+          }),
+        )
+      }
+      if (index === 3) {
+        if (!classLinkStatus.configured) {
+          setMessage('当前没有已保存的 ClassLink 令牌')
+          return
+        }
+        setClassLinkStatus(
+          await callDaemon<ClassLinkStatus>('classlink.set', {
+            enabled: false,
+            clearToken: true,
+          }),
+        )
+      }
+      await refreshSettingsState()
+      setMessage(index === 3 ? 'ClassLink 已断开并删除连接令牌' : 'ClassLink 设置已保存')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const submitClassLinkToken = async () => {
+    const token = inputValue.trim()
+    setInputValue('')
+    if (!token) {
+      setMessage('ClassLink 连接令牌不能为空')
+      return
+    }
+    setMessage('正在保存并连接 ClassLink…')
+    try {
+      setClassLinkStatus(
+        await callDaemon<ClassLinkStatus>('classlink.set', { token, enabled: true }),
+      )
+      await refreshSettingsState()
+      setMode('classlink')
+      setMessage('ClassLink 令牌已保存，正在连接 ClassIsland')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const submitClassLinkPort = async () => {
+    const port = Number(inputValue)
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      setMessage('端口必须是 1024 到 65535 之间的整数')
+      return
+    }
+    setInputValue('')
+    try {
+      setClassLinkStatus(await callDaemon<ClassLinkStatus>('classlink.set', { port }))
+      await refreshSettingsState()
+      setMode('classlink')
+      setMessage(`ClassLink 端口已更新为 ${port}`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -1205,6 +1327,26 @@ export const NowPlaying = () => {
         return
       }
       if (input && !key.ctrl && !key.meta) setInputValue((value) => value + input)
+      return
+    }
+
+    if (mode === 'classlink-token' || mode === 'classlink-port') {
+      if (key.escape) {
+        setInputValue('')
+        setMode('classlink')
+        return
+      }
+      if (key.return) {
+        void (mode === 'classlink-token' ? submitClassLinkToken() : submitClassLinkPort())
+        return
+      }
+      if (key.backspace || key.delete) {
+        setInputValue((value) => value.slice(0, -1))
+        return
+      }
+      if (input && !key.ctrl && !key.meta && (mode === 'classlink-token' || /^\d+$/.test(input))) {
+        setInputValue((value) => value + input)
+      }
       return
     }
 
@@ -1495,12 +1637,31 @@ export const NowPlaying = () => {
     if (mode === 'settings') {
       if (key.escape || controlInput === 'o' || input === ',') return setMode('normal')
       if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setSettingsIndex((index) => Math.min(7, index + 1))
+      if (key.downArrow) return setSettingsIndex((index) => Math.min(8, index + 1))
       if (settingsIndex === 7 && (key.rightArrow || key.return || input === ' ')) {
+        return void openClassLinkPage()
+      }
+      if (settingsIndex === 8 && (key.rightArrow || key.return || input === ' ')) {
         return void openAccountPage()
       }
+      if (settingsIndex >= 7) return
       if (key.leftArrow) void changeSetting(settingsIndex, -1)
       if (key.rightArrow || key.return || input === ' ') void changeSetting(settingsIndex, 1)
+      return
+    }
+
+    if (mode === 'classlink') {
+      if (key.escape) return setMode('settings')
+      if (key.upArrow) return setClassLinkIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) return setClassLinkIndex((index) => Math.min(3, index + 1))
+      if (
+        (classLinkIndex === 0 && key.leftArrow) ||
+        key.rightArrow ||
+        key.return ||
+        input === ' '
+      ) {
+        void changeClassLinkSetting(classLinkIndex)
+      }
       return
     }
 
@@ -1652,6 +1813,18 @@ export const NowPlaying = () => {
         ['Windows SMTC', settingsConfig.smtc.enabled ? '开启' : '关闭'],
         ['歌词升级', settingsConfig.lyrics.upgrade ? 'TTML / QRC' : '关闭'],
         [
+          'ClassLink',
+          classLinkStatus?.connected
+            ? '已连接'
+            : settingsConfig.classLink.enabled
+              ? classLinkStatus?.configured
+                ? '等待连接'
+                : '缺少令牌'
+              : classLinkStatus?.configured
+                ? '关闭（已配置）'
+                : '未配置',
+        ],
+        [
           '网易云账号',
           account.loggedIn
             ? account.profile?.nickname || String(account.profile?.userId)
@@ -1659,6 +1832,22 @@ export const NowPlaying = () => {
         ],
       ]
     : []
+  const classLinkRows: Array<[string, string]> =
+    settingsConfig && classLinkStatus
+      ? [
+          [
+            '联动状态',
+            classLinkStatus.enabled
+              ? classLinkStatus.connected
+                ? '开启 · 已连接'
+                : '开启 · 等待连接'
+              : '关闭',
+          ],
+          ['监听端口', String(settingsConfig.classLink.port)],
+          ['连接令牌', classLinkStatus.configured ? '已配置' : '未配置'],
+          ['删除配置', classLinkStatus.configured ? '断开并删除令牌' : '无令牌可删除'],
+        ]
+      : []
 
   const interactionPanel = (
     <Box
@@ -1695,6 +1884,21 @@ export const NowPlaying = () => {
             {'•'.repeat(Math.min(inputValue.length, Math.max(8, terminalWidth - 18)))}█
           </Text>
           <Text dimColor> 回车验证并保存，Esc 取消</Text>
+        </Text>
+      ) : null}
+      {mode === 'classlink-token' ? (
+        <Text>
+          ClassLink 令牌 ›{' '}
+          <Text color="yellow">
+            {'•'.repeat(Math.min(inputValue.length, Math.max(8, terminalWidth - 26)))}█
+          </Text>
+          <Text dimColor> 回车保存并启用，Esc 取消</Text>
+        </Text>
+      ) : null}
+      {mode === 'classlink-port' ? (
+        <Text>
+          ClassLink 端口 › <Text color="cyan">{shownInput || '50064'}█</Text>
+          <Text dimColor> 范围 1024-65535，Enter 保存，Esc 取消</Text>
         </Text>
       ) : null}
       {mode === 'results' ? (
@@ -1948,6 +2152,24 @@ export const NowPlaying = () => {
               ? `${status.lastScrobble.ok ? '成功' : '失败'} · ${status.lastScrobble.mode} · ${status.lastScrobble.playedSeconds}s`
               : '本次 daemon 启动后暂无记录'}
           </Text>
+        </>
+      ) : null}
+      {mode === 'classlink' ? (
+        <>
+          <Text bold>ClassLink 设置（↑/↓ 选择，Enter 修改，Esc 返回设置）</Text>
+          {classLinkRows.map(([label, value], index) => (
+            <Text key={label} color={index === classLinkIndex ? 'cyan' : undefined}>
+              {index === classLinkIndex ? '▶ ' : '  '}
+              {label.padEnd(12, ' ')} {value}
+            </Text>
+          ))}
+          <Text dimColor>
+            地址：{classLinkStatus?.endpoint || 'http://127.0.0.1:50064'} ·{' '}
+            {classLinkStatus?.connected
+              ? 'ClassIsland 已连接'
+              : classLinkStatus?.lastError || '尚未建立连接'}
+          </Text>
+          <Text dimColor>连接令牌只保存在敏感配置文件中，设置页不会显示原文。</Text>
         </>
       ) : null}
       {mode === 'account' ? (

@@ -9,6 +9,7 @@ import {
 import { toAppError } from './core/errors.js'
 import { VERSION } from './version.js'
 import type {
+  ClassLinkStatus,
   CommentPage,
   CollectionSummary,
   LyricResult,
@@ -54,20 +55,20 @@ const formatSong = (song: Song, index?: number) => {
   return `${prefix}${song.name} — ${artists} [${song.id}]`
 }
 
-const readCookieInput = async () => {
+const readSecretInput = async (prompt: string, jsonHint: string) => {
   if (!process.stdin.isTTY) {
     let value = ''
     for await (const chunk of process.stdin) value += chunk.toString()
     return value.trim()
   }
   if (program.opts().json) {
-    throw new Error('JSON 模式下请通过参数或 stdin 提供 Cookie')
+    throw new Error(jsonHint)
   }
   if (!process.stdin.setRawMode) {
-    throw new Error('当前终端不支持隐藏输入，请通过 stdin 提供 Cookie')
+    throw new Error('当前终端不支持隐藏输入，请通过 stdin 提供')
   }
 
-  process.stderr.write('请粘贴网易云 Cookie（输入内容已隐藏，回车确认）：')
+  process.stderr.write(prompt)
   return new Promise<string>((resolve, reject) => {
     let value = ''
     const finish = () => {
@@ -79,7 +80,7 @@ const readCookieInput = async () => {
       for (const character of buffer.toString('utf8')) {
         if (character === '\u0003') {
           finish()
-          reject(new Error('已取消 Cookie 输入'))
+          reject(new Error('已取消输入'))
           return
         }
         if (character === '\r' || character === '\n') {
@@ -103,6 +104,18 @@ const readCookieInput = async () => {
     process.stdin.on('data', onData)
   })
 }
+
+const readCookieInput = () =>
+  readSecretInput(
+    '请粘贴网易云 Cookie（输入内容已隐藏，回车确认）：',
+    'JSON 模式下请通过参数或 stdin 提供 Cookie',
+  )
+
+const readClassLinkTokenInput = () =>
+  readSecretInput(
+    '请粘贴 ClassLink 连接令牌（输入内容已隐藏，回车确认）：',
+    'JSON 模式下请通过参数或 stdin 提供 ClassLink 连接令牌',
+  )
 
 program
   .command('search <keywords>')
@@ -633,6 +646,44 @@ const smtc = program.command('smtc').description('管理 Windows 系统媒体控
 smtc.command('status').action(async () => output(await withDaemon('smtc.status')))
 smtc.command('enable').action(async () => output(await withDaemon('smtc.set', { enabled: true })))
 smtc.command('disable').action(async () => output(await withDaemon('smtc.set', { enabled: false })))
+
+const classLink = program.command('classlink').description('管理 ClassIsland ClassLink 联动')
+classLink
+  .command('status')
+  .action(async () => output(await withDaemon<ClassLinkStatus>('classlink.status')))
+classLink
+  .command('connect [token]')
+  .description('保存连接令牌并启用 ClassLink；不传参数时使用隐藏输入')
+  .option('-p, --port <port>', 'ClassIsland 监听端口')
+  .action(async (token, options) => {
+    const value = String(token || '').trim() || (await readClassLinkTokenInput())
+    output(
+      await withDaemon<ClassLinkStatus>('classlink.set', {
+        enabled: true,
+        token: value,
+        port: options.port === undefined ? undefined : Number(options.port),
+      }),
+    )
+  })
+classLink
+  .command('enable')
+  .action(async () => output(await withDaemon<ClassLinkStatus>('classlink.set', { enabled: true })))
+classLink
+  .command('disable')
+  .action(async () =>
+    output(await withDaemon<ClassLinkStatus>('classlink.set', { enabled: false })),
+  )
+classLink
+  .command('disconnect')
+  .description('禁用 ClassLink 并删除本地连接令牌')
+  .action(async () =>
+    output(
+      await withDaemon<ClassLinkStatus>('classlink.set', {
+        enabled: false,
+        clearToken: true,
+      }),
+    ),
+  )
 
 program
   .command('doctor')
