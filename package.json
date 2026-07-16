@@ -1,6 +1,6 @@
 {
   "name": "@laoshuikaixue/cloudmusic-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A terminal-first NetEase Cloud Music player with spectrum visualization and AI tool support.",
   "keywords": [
     "netease-cloud-music",
