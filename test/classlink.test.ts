@@ -128,8 +128,10 @@ describe('ClassLink lyric serialization', () => {
   it('resends the current cover when the receiver reports that it is missing', async () => {
     const cover = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
     let coverUploads = 0
+    let coverDownloads = 0
     const server = createServer((request, response) => {
       if (request.method === 'GET' && request.url?.startsWith('/cover.jpg')) {
+        coverDownloads += 1
         response.writeHead(200, {
           'Content-Type': 'image/jpeg',
           'Content-Length': String(cover.length),
@@ -187,6 +189,7 @@ describe('ClassLink lyric serialization', () => {
       await waitFor(() => coverUploads >= 2)
 
       expect(coverUploads).toBe(2)
+      expect(coverDownloads).toBe(1)
     } finally {
       bridge.stop()
       await new Promise<void>((resolve) => server.close(() => resolve()))
