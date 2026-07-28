@@ -20,6 +20,11 @@ import type {
   SpectrumFrame,
 } from './core/types.js'
 
+// React 19 开发构建每次渲染都会写入 performance.measure 条目，Node 的 User Timing
+// 时间线永不自动清理，TUI 以 20fps 渲染时会在数十分钟内累积数 GB 堆内存并 OOM。
+// CLI 是终端应用而非 React 开发环境，必须在动态加载 react/ink 之前强制生产构建。
+if (process.env.NODE_ENV !== 'production') process.env.NODE_ENV = 'production'
+
 if (process.argv[2] === '__daemon') {
   const { runDaemonServer } = await import('./ipc/server.js')
   await runDaemonServer()
