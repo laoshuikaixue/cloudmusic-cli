@@ -295,6 +295,9 @@ export const NowPlaying = () => {
   const [inputValue, setInputValue] = useState('')
   const [searchResults, setSearchResults] = useState<Song[]>([])
   const [searchType, setSearchType] = useState<SearchType>('song')
+  const [searchSuggestions, setSearchSuggestions] = useState<string[]>([])
+  const [suggestionIndex, setSuggestionIndex] = useState(-1)
+  const suggestionSeqRef = useRef(0)
   const [searchPlaylists, setSearchPlaylists] = useState<PlaylistSummary[]>([])
   const [searchCollections, setSearchCollections] = useState<CollectionSummary[]>([])
   const [searchCollectionType, setSearchCollectionType] = useState<'album' | 'artist'>('album')
@@ -568,8 +571,30 @@ export const NowPlaying = () => {
     return () => clearInterval(timer)
   }, [mode])
 
-  const submitSearch = async () => {
+  // 搜索框实时补全：防抖请求关键词联想，序号防止过期响应覆盖新结果
+  useEffect(() => {
+    if (mode !== 'search') return
     const keywords = inputValue.trim()
+    const seq = ++suggestionSeqRef.current
+    if (!keywords) {
+      setSearchSuggestions([])
+      setSuggestionIndex(-1)
+      return
+    }
+    const timer = setTimeout(() => {
+      void callDaemon<string[]>('search.suggest', { keywords })
+        .then((items) => {
+          if (suggestionSeqRef.current !== seq) return
+          setSearchSuggestions(items)
+          setSuggestionIndex(-1)
+        })
+        .catch(() => undefined)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [mode, inputValue])
+
+  const submitSearch = async (overrideKeywords?: string) => {
+    const keywords = (overrideKeywords ?? inputValue).trim()
     if (!keywords) return
     setMessage(`正在搜索：${keywords}`)
     try {
@@ -1357,12 +1382,26 @@ export const NowPlaying = () => {
         return
       }
       if (key.return) {
-        void (mode === 'search' ? submitSearch() : submitCookie())
+        if (mode === 'search') {
+          const suggestion = suggestionIndex >= 0 ? searchSuggestions[suggestionIndex] : undefined
+          if (suggestion) setInputValue(suggestion)
+          void submitSearch(suggestion)
+        } else {
+          void submitCookie()
+        }
         return
       }
       if (mode === 'search' && key.tab) {
         const index = searchTypes.indexOf(searchType)
         setSearchType(searchTypes[(index + 1) % searchTypes.length] || 'song')
+        return
+      }
+      if (mode === 'search' && key.upArrow) {
+        setSuggestionIndex((index) => Math.max(-1, index - 1))
+        return
+      }
+      if (mode === 'search' && key.downArrow) {
+        setSuggestionIndex((index) => Math.min(searchSuggestions.length - 1, index + 1))
         return
       }
       if (key.backspace || key.delete) {
@@ -1871,11 +1910,23 @@ export const NowPlaying = () => {
         </>
       ) : null}
       {mode === 'search' ? (
-        <Text>
-          搜索{searchTypeLabels[searchType]} ›{' '}
-          <Text color="cyan">{shownInput || '输入关键词'}█</Text>
-          <Text dimColor> Tab 切换类型</Text>
-        </Text>
+        <>
+          <Text>
+            搜索{searchTypeLabels[searchType]} ›{' '}
+            <Text color="cyan">{shownInput || '输入关键词'}█</Text>
+            <Text dimColor> Tab 切换类型{searchSuggestions.length ? ' · ↑↓ 选择联想词' : ''}</Text>
+          </Text>
+          {searchSuggestions.map((keyword, index) => (
+            <Text
+              key={keyword}
+              color={index === suggestionIndex ? 'cyan' : undefined}
+              dimColor={index !== suggestionIndex}
+            >
+              {index === suggestionIndex ? '▶ ' : '  '}
+              {keyword}
+            </Text>
+          ))}
+        </>
       ) : null}
       {mode === 'cookie' ? (
         <Text>

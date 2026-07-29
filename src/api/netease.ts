@@ -193,6 +193,13 @@ export class NeteaseApi {
     }
   }
 
+  /** 搜索关键词联想（输入补全） */
+  async searchSuggest(keywords: string): Promise<string[]> {
+    const result = await this.call<any>('search_suggest', { keywords, type: 'mobile' })
+    const items = (result?.result?.allMatch || []).map((item: any) => String(item?.keyword || ''))
+    return [...new Set<string>(items.filter(Boolean))].slice(0, 8)
+  }
+
   async songDetail(id: number) {
     const result = await this.call<any>('song_detail', { ids: String(id) })
     const raw = result?.songs?.[0]

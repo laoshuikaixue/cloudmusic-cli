@@ -722,6 +722,8 @@ export class PlayerDaemon {
           Number(params.limit || 20),
           Number(params.offset || 0),
         )
+      case 'search.suggest':
+        return this.api.searchSuggest(stringParam(params.keywords, 'keywords'))
       case 'search.playlists':
         return this.api.searchPlaylists(
           stringParam(params.keywords, 'keywords'),
