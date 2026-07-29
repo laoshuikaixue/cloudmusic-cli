@@ -1,6 +1,6 @@
 /**
  * QQ 音乐 QRC 解密入口。
- * Triple DES 实现沿用 SPlayer-Next/LDDC 的兼容算法。
+ * Triple DES 实现沿用 LDDC 的兼容算法。
  */
 import { inflateRawSync, inflateSync, unzipSync } from 'node:zlib'
 import { qrcDecrypt } from './tripledes.js'

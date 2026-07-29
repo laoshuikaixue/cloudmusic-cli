@@ -1,6 +1,5 @@
 /**
  * 歌词候选匹配与正文/时间轴一致性校验。
- * 参考 SPlayer-Next 的纯匹配器实现，保留在 daemon 可复用的无状态层。
  */
 import type { LyricLine, Song } from './types.js'
 

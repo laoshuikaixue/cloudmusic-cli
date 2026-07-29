@@ -1,10 +1,19 @@
 import { XMLParser } from 'fast-xml-parser'
+import { detectBackgroundLine, splitTrailingBackground } from './lyric-bg.js'
 import type { LyricFormat, LyricLine, LyricWord } from './types.js'
 
 const timePattern = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g
 const yrcLinePattern = /^\[(\d+),(\d+)\](.*)$/
-const yrcWordPattern = /\((\d+),(\d+),\d+\)([^(]*)/g
-const qrcWordPattern = /([^(]*)\((\d+),(\d+)\)/g
+// YRC 时间标记只能是 (数字,数字,数字)，其余括号视为歌词文本
+const yrcTimingPattern = /\((\d+),(\d+),\d+\)/g
+// QRC 时间标记只能是 (数字,数字)，其余括号视为歌词文本
+const qrcTimingPattern = /\((\d+),(\d+)\)/g
+// CJK 部首补充 / 康熙部首 / 兼容表意文字区间，刻意不含全角字母数字
+const kangxiCompatPattern = /[\u2e80-\u2eff\u2f00-\u2fdf\uf900-\ufaff]/g
+
+/** 将康熙部首等兼容字符归一化为常规汉字（如 ⾏ → 巾） */
+export const normalizeKangxi = (text: string) =>
+  text.replace(kangxiCompatPattern, (char) => char.normalize('NFKC'))
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -24,6 +33,9 @@ const finalizeLineEnds = (lines: LyricLine[]) => {
   )
   for (let index = 0; index < sorted.length; index += 1) {
     const line = sorted[index]!
+    line.text = normalizeKangxi(line.text)
+    if (line.translation) line.translation = normalizeKangxi(line.translation)
+    for (const word of line.words || []) word.text = normalizeKangxi(word.text)
     if (line.endTime > line.time) continue
     const next = sorted.slice(index + 1).find((candidate) => !candidate.isBackground)
     line.endTime = next ? Math.max(line.time, next.time) : line.time + 5
@@ -59,12 +71,15 @@ export const parseYrc = (input?: string): LyricLine[] => {
     const lineDuration = Number(match[2])
     const content = match[3] || ''
     const words: LyricWord[] = []
-    yrcWordPattern.lastIndex = 0
-    let wordMatch: RegExpExecArray | null
-    while ((wordMatch = yrcWordPattern.exec(content))) {
+    // 逐个时间标记切分，标记之后到下一标记前的内容（含字面括号）保留为歌词文本
+    const timings = [...content.matchAll(yrcTimingPattern)]
+    for (let index = 0; index < timings.length; index += 1) {
+      const wordMatch = timings[index]!
       const startTime = Number(wordMatch[1])
       const duration = Number(wordMatch[2])
-      const text = wordMatch[3] || ''
+      const textStart = wordMatch.index + wordMatch[0].length
+      const textEnd = index + 1 < timings.length ? timings[index + 1]!.index : content.length
+      const text = content.slice(textStart, textEnd)
       if (!text) continue
       words.push({
         startTime: seconds(startTime),
@@ -72,19 +87,36 @@ export const parseYrc = (input?: string): LyricLine[] => {
         text,
       })
     }
-    const text = words
-      .map((word) => word.text)
-      .join('')
-      .trim()
-    if (!Number.isFinite(lineStart) || !text) continue
-    result.push({
-      time: seconds(lineStart),
-      endTime: seconds(lineStart + lineDuration),
-      text,
-      words,
-    })
+    // 首个时间标记前的字面文本（如背景行开括号）归入首字
+    const leading = timings.length ? content.slice(0, timings[0]!.index) : ''
+    if (leading && words.length) words[0]!.text = leading + words[0]!.text
+    pushWordTimedLine(result, seconds(lineStart), seconds(lineStart + lineDuration), words)
   }
   return finalizeLineEnds(result)
+}
+
+const pushWordTimedLine = (
+  result: LyricLine[],
+  time: number,
+  endTime: number,
+  rawWords: LyricWord[],
+) => {
+  if (!Number.isFinite(time)) return
+  const isBackground = detectBackgroundLine(rawWords)
+  const words = rawWords.filter((word) => word.text.length > 0)
+  const text = words
+    .map((word) => word.text)
+    .join('')
+    .trim()
+  if (!text) return
+  const line: LyricLine = { time, endTime, text, words }
+  if (isBackground) {
+    line.isBackground = true
+  } else {
+    const background = splitTrailingBackground(line)
+    if (background) result.push(background)
+  }
+  result.push(line)
 }
 
 const decodeXmlEntities = (text: string) =>
@@ -115,12 +147,13 @@ export const parseQrc = (input?: string): LyricLine[] => {
     const lineDuration = Number(lineMatch[2])
     const content = lineMatch[3] || ''
     const words: LyricWord[] = []
-    qrcWordPattern.lastIndex = 0
-    let wordMatch: RegExpExecArray | null
-    while ((wordMatch = qrcWordPattern.exec(content))) {
-      const text = wordMatch[1] || ''
-      const startTime = Number(wordMatch[2])
-      const duration = Number(wordMatch[3])
+    // 逐个时间标记切分，标记之间的内容（含字面括号）全部保留为歌词文本
+    let cursor = 0
+    for (const wordMatch of content.matchAll(qrcTimingPattern)) {
+      const text = content.slice(cursor, wordMatch.index)
+      cursor = wordMatch.index + wordMatch[0].length
+      const startTime = Number(wordMatch[1])
+      const duration = Number(wordMatch[2])
       if (!text) continue
       words.push({
         startTime: seconds(startTime),
@@ -128,17 +161,10 @@ export const parseQrc = (input?: string): LyricLine[] => {
         text,
       })
     }
-    const text = words
-      .map((word) => word.text)
-      .join('')
-      .trim()
-    if (!Number.isFinite(lineStart) || !text) continue
-    result.push({
-      time: seconds(lineStart),
-      endTime: seconds(lineStart + lineDuration),
-      text,
-      words,
-    })
+    // 末个时间标记后的字面文本（如背景行闭括号）归入末字
+    const trailing = content.slice(cursor)
+    if (trailing && words.length) words[words.length - 1]!.text += trailing
+    pushWordTimedLine(result, seconds(lineStart), seconds(lineStart + lineDuration), words)
   }
   return finalizeLineEnds(result)
 }

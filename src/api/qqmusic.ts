@@ -1,6 +1,5 @@
 /**
  * QQ 音乐匿名搜索与 QRC 歌词获取。
- * 请求结构参考 SPlayer-Next 的 QM 原生 API 模块。
  */
 import { decryptQrc } from './qrc.js'
 
