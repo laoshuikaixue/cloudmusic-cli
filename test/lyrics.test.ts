@@ -3,6 +3,7 @@ import {
   findLyricIndex,
   getLyricContext,
   mergeLyrics,
+  normalizeKangxi,
   parseLrc,
   parseQrc,
   parseTtml,
@@ -69,6 +70,41 @@ describe('lyric parsing', () => {
         ],
       },
     ])
+  })
+
+  it('keeps literal parentheses inside QRC lyric text', () => {
+    const lines = parseQrc('[1000,1200]爱(1000,400)(哈)(1400,800)你(2200,400)')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatchObject({ text: '爱(哈)你' })
+    expect(lines[0]?.words?.map((word) => word.text)).toEqual(['爱', '(哈)', '你'])
+  })
+
+  it('marks fully bracketed word-timed lines as background vocals', () => {
+    const lines = parseQrc('[0,2000]主歌词(0,1000)\n[1000,1000](Ooh(1000,500) yeah)(1500,500)')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatchObject({ text: '主歌词' })
+    expect(lines[0]?.isBackground).toBeUndefined()
+    expect(lines[1]).toMatchObject({ time: 1, endTime: 2, text: 'Ooh yeah', isBackground: true })
+  })
+
+  it('splits a trailing bracketed harmony into a background line', () => {
+    const lines = parseYrc('[0,2000](0,500,0)Hello (500,500,0)world (1000,500,0)(ah)')
+    expect(lines).toEqual([
+      expect.objectContaining({ time: 0, endTime: 1, text: 'Hello world' }),
+      expect.objectContaining({ time: 1, endTime: 1.5, text: 'ah', isBackground: true }),
+    ])
+  })
+
+  it('keeps Japanese kana ruby annotations on the main line', () => {
+    const lines = parseYrc('[0,1000](0,500,0)言(500,500,0)(こと)')
+    expect(lines).toEqual([expect.objectContaining({ text: '言(こと)' })])
+    expect(lines[0]?.isBackground).toBeUndefined()
+  })
+
+  it('normalizes Kangxi radicals into regular han characters', () => {
+    expect(normalizeKangxi('⾏く')).toBe('行く')
+    const lines = parseLrc('[00:01.00]⾏くよ')
+    expect(lines[0]?.text).toBe('行くよ')
   })
 
   it('parses TTML words, duet agents, translations and background vocals', () => {

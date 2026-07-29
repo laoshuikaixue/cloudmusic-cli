@@ -207,6 +207,8 @@ export class NeteaseApi {
           raw,
         }
       })
+      // 失败不缓存，避免预载失败后污染正式加载
+      promise.catch(() => this.lyricCache.delete(id))
       this.lyricCache.set(id, promise)
     }
     return promise
@@ -225,6 +227,7 @@ export class NeteaseApi {
       promise = (base ? Promise.resolve(base) : this.lyrics(song.id)).then((official) =>
         upgradeLyrics(song, official, config),
       )
+      promise.catch(() => this.upgradedLyricCache.delete(key))
       this.upgradedLyricCache.set(key, promise)
     }
     return promise

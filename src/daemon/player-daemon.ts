@@ -74,6 +74,7 @@ export class PlayerDaemon {
   private scrobblePlayedSeconds = 0
   private scrobbleLastTick = Date.now()
   private lastScrobble?: PlaybackStatus['lastScrobble']
+  private lyricPreloadSongId = 0
   private likedSongIds = new Set<number>()
   private scrobbleTimer?: NodeJS.Timeout
   private smtcTimer?: NodeJS.Timeout
@@ -123,6 +124,7 @@ export class PlayerDaemon {
     })
     this.scrobbleTimer = setInterval(() => {
       void this.maybeScrobble().catch(() => undefined)
+      this.maybePreloadNextLyrics()
     }, 1000)
     if (this.store.getCookie()) void this.refreshLikedSongs().catch(() => undefined)
     if (this.config.smtc.enabled) {
@@ -137,6 +139,33 @@ export class PlayerDaemon {
 
   private get song() {
     return this.queue.songs[this.queue.index] || null
+  }
+
+  /** 可预测时返回下一首歌曲；shuffle 随机、repeat-one 重复当前曲，均无预载价值 */
+  private peekNextSong(): Song | null {
+    const { songs, index } = this.queue
+    if (songs.length < 2) return null
+    if (this.config.mode === 'shuffle' || this.config.mode === 'repeat-one') return null
+    if (this.queue.context?.type === 'fm') return songs[index + 1] || null
+    return songs[(index + 1) % songs.length] || null
+  }
+
+  /** 临近曲末时预热下一首的歌词及升级结果，切歌时直接命中 NeteaseApi 缓存 */
+  private maybePreloadNextLyrics() {
+    if (this.state !== 'playing') return
+    const song = this.song
+    if (!song) return
+    const duration = song.duration / 1000
+    if (!duration) return
+    const remaining = duration - this.pipeline.getPosition()
+    if (remaining > 30 || remaining <= 0) return
+    const next = this.peekNextSong()
+    if (!next || next.id === this.lyricPreloadSongId) return
+    this.lyricPreloadSongId = next.id
+    void this.api
+      .lyrics(next.id)
+      .then((base) => this.api.upgradedLyrics(next, this.config, base))
+      .catch(() => undefined)
   }
 
   private syncClassLink() {
