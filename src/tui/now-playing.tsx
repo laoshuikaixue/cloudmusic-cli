@@ -31,6 +31,7 @@ import type {
   PlaybackStatus,
   PlaylistSummary,
   QueueSnapshot,
+  SigninResult,
   Song,
   SpectrumFrame,
   UserProfile,
@@ -494,6 +495,21 @@ export const NowPlaying = () => {
       setMessage(result.loggedIn ? `账号有效：${result.profile?.nickname}` : '当前未登录')
     } catch (error) {
       setAccount({ loggedIn: false, valid: false })
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const runSignin = async () => {
+    setMessage('正在签到…')
+    try {
+      const result = await callDaemon<SigninResult>('signin')
+      const parts = [result.daily, result.yunbei].map((item) => {
+        if (!item.success) return `${item.task}失败（${item.message}）`
+        if (item.repeated) return `${item.task}已完成`
+        return `${item.task}成功${item.point !== undefined ? ` +${item.point}` : ''}`
+      })
+      setMessage(parts.join(' · '))
+    } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
   }
@@ -1707,7 +1723,7 @@ export const NowPlaying = () => {
     if (mode === 'account') {
       if (key.escape) return setMode('settings')
       if (key.upArrow) return setAccountIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setAccountIndex((index) => Math.min(3, index + 1))
+      if (key.downArrow) return setAccountIndex((index) => Math.min(4, index + 1))
       if (key.return) {
         if (accountIndex === 0) {
           setInputValue('')
@@ -1715,7 +1731,8 @@ export const NowPlaying = () => {
         }
         if (accountIndex === 1) return void beginQrLogin()
         if (accountIndex === 2) return void verifyAccount()
-        if (accountIndex === 3) {
+        if (accountIndex === 3) return void runSignin()
+        if (accountIndex === 4) {
           void callDaemon('logout')
             .then(() => {
               setAccount({ loggedIn: false, valid: false })
@@ -2226,7 +2243,7 @@ export const NowPlaying = () => {
       {mode === 'account' ? (
         <>
           <Text bold>账号设置（↑/↓ 选择，Enter 执行，Esc 返回设置）</Text>
-          {['Cookie 登录', '二维码登录', '验证账号', '退出账号'].map((label, index) => (
+          {['Cookie 登录', '二维码登录', '验证账号', '每日签到', '退出账号'].map((label, index) => (
             <Text key={label} color={index === accountIndex ? 'cyan' : undefined}>
               {index === accountIndex ? '▶ ' : '  '}
               {label}
