@@ -12,12 +12,16 @@ import type {
   ClassLinkStatus,
   CommentPage,
   CollectionSummary,
+  ListenStats,
   LyricResult,
   OutputEnvelope,
   PlaybackStatus,
   PlaylistSummary,
+  RecentPlayEntry,
+  SigninResult,
   Song,
   SpectrumFrame,
+  TodayListenSong,
 } from './core/types.js'
 
 // React 19 开发构建每次渲染都会写入 performance.measure 条目，Node 的 User Timing
@@ -302,6 +306,80 @@ program
         ),
       ),
     )
+  })
+
+program
+  .command('stats')
+  .description('听歌足迹：累计时长与听歌习惯分布')
+  .option('--month', '查看月报告')
+  .option('--year', '查看年报告')
+  .option('--today', '查看今日听歌歌曲')
+  .action(async (options) => {
+    if (options.today) {
+      const songs = await withDaemon<TodayListenSong[]>('stats.today')
+      return output(songs, () =>
+        songs.forEach((song, index) =>
+          console.log(
+            `${String(index + 1).padStart(2, ' ')}. ${song.name} — ${song.artists.join(' / ')} · ${new Date(song.lastPlayTime).toLocaleTimeString()} [${song.id}]`,
+          ),
+        ),
+      )
+    }
+    const type = options.year ? 'year' : options.month ? 'month' : 'week'
+    const stats = await withDaemon<ListenStats>('stats.listen', { type })
+    output(stats, () => {
+      const { report } = stats
+      const rangeName = type === 'year' ? '本年' : type === 'month' ? '本月' : '本周'
+      console.log(`累计听歌 ${Math.round(stats.totalPlaySeconds / 3600)} 小时`)
+      console.log(
+        `${rangeName}听歌 ${report.playMinutes} 分钟 · ${report.listenDays} 天 · ${report.songCount} 首`,
+      )
+      if (report.dailyDurations.length) {
+        console.log('每日时长：')
+        report.dailyDurations.forEach((day) => console.log(`  ${day.date}  ${day.minutes} 分钟`))
+      }
+      if (report.topSongs.length) {
+        console.log('收听 TOP 歌曲：')
+        report.topSongs.forEach((song, index) =>
+          console.log(
+            `  ${index + 1}. ${song.name}${song.text ? ` · ${song.text}` : ''} [${song.id}]`,
+          ),
+        )
+      }
+      if (report.topArtists.length) {
+        console.log('收听 TOP 歌手：')
+        report.topArtists.forEach((artist, index) =>
+          console.log(
+            `  ${index + 1}. ${artist.name}${artist.text ? ` · ${artist.text}` : ''} [${artist.id}]`,
+          ),
+        )
+      }
+      if (report.styles.length) {
+        console.log(`风格分布：${report.styles.map((s) => `${s.name} ${s.percent}%`).join(' · ')}`)
+      }
+      if (report.languages.length) {
+        console.log(
+          `语种分布：${report.languages.map((l) => `${l.language} ${l.percent}%`).join(' · ')}`,
+        )
+      }
+      if (report.ages.length) {
+        console.log(`年代分布：${report.ages.map((a) => `${a.age}s ${a.songCount}首`).join(' · ')}`)
+      }
+    })
+  })
+
+program
+  .command('signin')
+  .description('每日签到（积分 + 云贝）')
+  .action(async () => {
+    const result = await withDaemon<SigninResult>('signin')
+    output(result, () => {
+      for (const item of [result.daily, result.yunbei]) {
+        const state = item.success ? (item.repeated ? '已签到' : '签到成功') : '失败'
+        const point = item.point !== undefined ? ` (+${item.point})` : ''
+        console.log(`${item.task}：${state}${point}${item.success ? '' : ` · ${item.message}`}`)
+      }
+    })
   })
 
 program
@@ -610,6 +688,32 @@ library
       }),
     ),
   )
+library
+  .command('recent')
+  .description('服务端最近播放（跨设备）')
+  .option('--play', '播放云端最近播放列表')
+  .option('--limit <limit>', '返回数量', '50')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (options) => {
+    if (options.play) {
+      return output(
+        await withDaemon('library.recent.play', {
+          limit: Number(options.limit),
+          index: Number(options.index),
+        }),
+      )
+    }
+    const entries = await withDaemon<RecentPlayEntry[]>('library.recent', {
+      limit: Number(options.limit),
+    })
+    output(entries, () =>
+      entries.forEach((entry, index) =>
+        console.log(
+          `${formatSong(entry.song, index)} · ${new Date(entry.playTime).toLocaleString()}${entry.os ? ` · ${entry.os}` : ''}`,
+        ),
+      ),
+    )
+  })
 
 program
   .command('like <id>')

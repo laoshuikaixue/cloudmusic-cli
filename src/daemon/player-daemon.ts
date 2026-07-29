@@ -562,6 +562,16 @@ export class PlayerDaemon {
     )
   }
 
+  async playRecentSongs(limit = 50, index = 0) {
+    const entries = await this.api.recentSongs(limit)
+    if (!entries.length) throw new AppError('RECENT_EMPTY', '服务端最近播放为空')
+    return this.replaceQueue(
+      entries.map((entry) => entry.song),
+      index,
+      { type: 'history', name: '最近播放（云端）' },
+    )
+  }
+
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
     const lyricContext = getLyricContext(this.lyrics, position)
@@ -691,6 +701,7 @@ export class PlayerDaemon {
       'library.album.play',
       'library.artist.play',
       'library.record.play',
+      'library.recent.play',
       'classlink.set',
     ])
     if (serializedMethods.has(method)) {
@@ -1052,6 +1063,26 @@ export class PlayerDaemon {
           params.index === undefined ? 0 : numberParam(params.index, 'index'),
         )
       }
+      case 'library.recent':
+        return this.api.recentSongs(
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+        )
+      case 'library.recent.play':
+        return this.playRecentSongs(
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
+      case 'stats.listen': {
+        const type =
+          params.type === 'month' || params.type === 'year'
+            ? (params.type as 'month' | 'year')
+            : 'week'
+        return this.api.listenStats(type)
+      }
+      case 'stats.today':
+        return this.api.todayListenSongs()
+      case 'signin':
+        return this.api.signin()
       case 'like': {
         const id = numberParam(params.id, 'id')
         const liked = params.liked !== false

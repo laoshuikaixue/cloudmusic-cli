@@ -103,6 +103,10 @@ ncm queue next 186016
 ncm similar
 ncm similar 186016 --play
 ncm similar --type playlist
+ncm stats
+ncm stats --year
+ncm stats --today
+ncm signin
 ncm status --json
 ncm lyrics 186016 --words
 ncm lyrics 186016 --no-upgrade
@@ -132,6 +136,8 @@ ncm library fm --play
 ncm library heart --play
 ncm library fm-trash
 ncm library history
+ncm library recent
+ncm library recent --play --limit 30
 ncm library cloud --play
 ncm library albums
 ncm library album 377279150 --play

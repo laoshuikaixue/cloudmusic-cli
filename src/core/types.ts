@@ -70,6 +70,52 @@ export interface ListeningRecordEntry {
   score: number
 }
 
+export interface ListenReport {
+  type: 'week' | 'month' | 'year'
+  startTime: number
+  endTime: number
+  playMinutes: number
+  listenDays: number
+  songCount: number
+  dailyDurations: { date: string; minutes: number }[]
+  topSongs: { id: number; name: string; text?: string }[]
+  topArtists: { id: number; name: string; text?: string }[]
+  styles: { name: string; percent: number }[]
+  languages: { language: string; percent: number; songCount: number }[]
+  ages: { age: string; songCount: number }[]
+}
+
+export interface ListenStats {
+  totalPlaySeconds: number
+  report: ListenReport
+}
+
+export interface TodayListenSong {
+  id: number
+  name: string
+  artists: string[]
+  lastPlayTime: number
+}
+
+export interface RecentPlayEntry {
+  song: Song
+  playTime: number
+  os?: string
+}
+
+export interface SigninTaskResult {
+  task: string
+  success: boolean
+  repeated: boolean
+  message: string
+  point?: number
+}
+
+export interface SigninResult {
+  daily: SigninTaskResult
+  yunbei: SigninTaskResult
+}
+
 export interface UserProfile {
   userId: number
   nickname: string

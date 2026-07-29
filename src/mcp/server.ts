@@ -389,6 +389,33 @@ const tools = [
       },
     },
   },
+  {
+    name: 'get_listen_stats',
+    description: '听歌足迹：累计听歌时长与周/月/年听歌习惯报告；today 为 true 时返回今日听歌歌曲。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['week', 'month', 'year'], default: 'week' },
+        today: { type: 'boolean', default: false },
+      },
+    },
+  },
+  {
+    name: 'get_recent_songs',
+    description: '服务端最近播放记录（跨设备）；play 为 true 时替换队列并播放。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', default: 50 },
+        play: { type: 'boolean', default: false },
+      },
+    },
+  },
+  {
+    name: 'daily_signin',
+    description: '执行网易云每日签到（积分 + 云贝），重复签到视为已完成。',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ]
 
 const invokeTool = async (name: string, args: Record<string, unknown>) => {
@@ -427,6 +454,12 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       if (args.type === 'artist') return request('similar.artists', args)
       return request(args.play === true ? 'similar.play' : 'similar.songs', args)
     }
+    case 'get_listen_stats':
+      return request(args.today === true ? 'stats.today' : 'stats.listen', args)
+    case 'get_recent_songs':
+      return request(args.play === true ? 'library.recent.play' : 'library.recent', args)
+    case 'daily_signin':
+      return request('signin')
     case 'get_spectrum_snapshot':
       return request('spectrum')
     case 'get_user_playlists':

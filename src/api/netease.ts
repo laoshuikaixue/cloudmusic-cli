@@ -7,15 +7,21 @@ import type {
   CloudLibrary,
   CollectionSummary,
   ListeningRecordEntry,
+  ListenReport,
+  ListenStats,
   LyricResult,
   CommentPage,
   MusicComment,
   NewSongArea,
   PlaylistSummary,
   QueueContext,
+  RecentPlayEntry,
   ScrobbleMode,
+  SigninResult,
+  SigninTaskResult,
   Song,
   SourceResult,
+  TodayListenSong,
   UserProfile,
 } from '../core/types.js'
 
@@ -789,6 +795,116 @@ export class NeteaseApi {
       playCount: Number(item?.playCount || 0),
       score: Number(item?.score || 0),
     }))
+  }
+
+  /** 听歌足迹：累计听歌时长（秒）+ 周/月/年报告 */
+  async listenStats(type: ListenReport['type']): Promise<ListenStats> {
+    const [total, report] = await Promise.all([
+      this.call<any>('listen_data_total', { timestamp: Date.now() }),
+      this.call<any>('listen_data_report', { type, timestamp: Date.now() }),
+    ])
+    const data = report?.data || {}
+    // listenTimeDistributionBlock.playDuration 含播客时长，纯音乐时长在 listenTimeBlock
+    return {
+      totalPlaySeconds: Number(total?.data?.totalDuration || 0),
+      report: {
+        type,
+        startTime: Number(data.startTime || 0),
+        endTime: Number(data.endTime || 0),
+        playMinutes: Number(data.listenTimeBlock?.playDuration || 0),
+        listenDays: Number(data.listenTimeDistributionBlock?.listenDays || 0),
+        songCount: Number(data.wallpaperBlock?.songCount || 0),
+        dailyDurations: (data.listenTimeDistributionBlock?.durationDetails || []).map(
+          (item: any) => ({
+            date: String(item?.period || ''),
+            minutes: Number(item?.duration || 0),
+          }),
+        ),
+        topSongs: (data.topSongBlock?.sections || []).map((item: any) => ({
+          id: Number(item?.songId || 0),
+          name: String(item?.songName || '未知歌曲'),
+          text: item?.text ? String(item.text) : undefined,
+        })),
+        topArtists: (data.topArtistBlock?.sections || []).map((item: any) => ({
+          id: Number(item?.artistId || 0),
+          name: String(item?.artistName || '未知歌手'),
+          text: item?.text ? String(item.text) : undefined,
+        })),
+        styles: (data.topStyleBlock?.sections || []).map((item: any) => ({
+          name: String(item?.genreName || '未知'),
+          percent: Number(item?.percent || 0),
+        })),
+        languages: (data.topLanguageBlock?.sections || []).map((item: any) => ({
+          language: String(item?.language || '未知'),
+          percent: Number(item?.percent || 0),
+          songCount: Number(item?.playSongNum || 0),
+        })),
+        ages: (data.topAgeBlock?.sections || []).map((item: any) => ({
+          age: String(item?.age || ''),
+          songCount: Number(item?.playSongNum || 0),
+        })),
+      },
+    }
+  }
+
+  /** 今日听歌排行（按最近播放排序） */
+  async todayListenSongs(): Promise<TodayListenSong[]> {
+    const result = await this.call<any>('listen_data_today_song', { timestamp: Date.now() })
+    return (result?.data?.songDTOs || []).map((item: any) => ({
+      id: Number(item?.songId || 0),
+      name: String(item?.songName || '未知歌曲'),
+      artists: (item?.artists || [])
+        .map((artist: any) => String(artist?.artistName || ''))
+        .filter(Boolean),
+      lastPlayTime: Number(item?.lastPlayTime || 0) * 1000,
+    }))
+  }
+
+  /** 服务端最近播放（跨设备），playTime 为毫秒时间戳 */
+  async recentSongs(limit = 50): Promise<RecentPlayEntry[]> {
+    const result = await this.call<any>('record_recent_song', { limit, timestamp: Date.now() })
+    return (result?.data?.list || [])
+      .filter((item: any) => Number.isFinite(Number(item?.data?.id)))
+      .map((item: any) => ({
+        song: normalizeSong(item.data),
+        playTime: Number(item?.playTime || 0),
+        os: item?.multiTerminalInfo?.os ? String(item.multiTerminalInfo.os) : undefined,
+      }))
+  }
+
+  /** 每日签到（积分 + 云贝），重复签到视为已完成 */
+  async signin(): Promise<SigninResult> {
+    const attempt = async (
+      task: string,
+      name: string,
+      params: Record<string, unknown> = {},
+    ): Promise<SigninTaskResult> => {
+      try {
+        const result = await this.call<any>(name, { ...params, timestamp: Date.now() })
+        const point = Number(result?.point ?? result?.data?.sign?.point)
+        return {
+          task,
+          success: true,
+          repeated: false,
+          message: String(result?.msg || result?.message || '签到成功'),
+          point: Number.isFinite(point) ? point : undefined,
+        }
+      } catch (error) {
+        const detail = error instanceof AppError ? (error.details as any) : undefined
+        const code = Number(detail?.code)
+        const message = String(
+          detail?.msg || detail?.message || (error instanceof Error ? error.message : error),
+        )
+        if (code === -2 || /重复|已签到|已经签/.test(message)) {
+          return { task, success: true, repeated: true, message: '今天已签到' }
+        }
+        return { task, success: false, repeated: false, message }
+      }
+    }
+    return {
+      daily: await attempt('每日签到', 'daily_signin', { type: 0 }),
+      yunbei: await attempt('云贝签到', 'yunbei_sign'),
+    }
   }
 
   like(id: number, liked: boolean) {
