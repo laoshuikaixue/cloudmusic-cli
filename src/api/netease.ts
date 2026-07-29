@@ -194,6 +194,38 @@ export class NeteaseApi {
     return normalizeSong(raw)
   }
 
+  /** 副歌起止时间（毫秒），无副歌数据时返回 null */
+  async chorus(id: number): Promise<{ startTime: number; endTime: number } | null> {
+    const result = await this.call<any>('song_chorus', { id })
+    const raw = (result?.chorus || result?.data || []).find(
+      (item: any) => Number(item?.startTime) > 0,
+    )
+    if (!raw) return null
+    return { startTime: Number(raw.startTime), endTime: Number(raw.endTime || 0) }
+  }
+
+  async similarSongs(id: number, limit = 20): Promise<Song[]> {
+    const result = await this.call<any>('simi_song', { id, limit })
+    return (result?.songs || []).map(normalizeSong)
+  }
+
+  async similarPlaylists(id: number, limit = 20): Promise<PlaylistSummary[]> {
+    const result = await this.call<any>('simi_playlist', { id, limit })
+    return (result?.playlists || []).map(normalizePlaylist)
+  }
+
+  async similarArtists(id: number): Promise<CollectionSummary[]> {
+    const result = await this.call<any>('simi_artist', { id })
+    return (result?.artists || []).map((artist: any) => ({
+      id: Number(artist?.id),
+      name: String(artist?.name || '未知歌手'),
+      type: 'artist' as const,
+      cover: artist?.picUrl || artist?.img1v1Url,
+      subtitle: artist?.alias?.length ? artist.alias.join(' / ') : undefined,
+      count: Number(artist?.musicSize || 0),
+    }))
+  }
+
   async lyrics(id: number): Promise<LyricResult> {
     let promise = this.lyricCache.get(id)
     if (!promise) {

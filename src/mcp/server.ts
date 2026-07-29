@@ -45,13 +45,23 @@ const tools = [
   },
   {
     name: 'control_playback',
-    description: '暂停、恢复、切歌、停止、Seek 或调节音量。',
+    description: '暂停、恢复、切歌、停止、Seek、跳到副歌或调节音量。',
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['pause', 'resume', 'toggle', 'stop', 'next', 'previous', 'seek', 'volume'],
+          enum: [
+            'pause',
+            'resume',
+            'toggle',
+            'stop',
+            'next',
+            'previous',
+            'seek',
+            'volume',
+            'chorus',
+          ],
         },
         value: { type: 'number' },
         relative: { type: 'boolean' },
@@ -365,6 +375,20 @@ const tools = [
       required: ['id'],
     },
   },
+  {
+    name: 'get_similar',
+    description:
+      '基于当前播放或指定 ID 获取相似歌曲、歌单或歌手；type 为 song 时可用 play 直接替换队列播放。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['song', 'playlist', 'artist'], default: 'song' },
+        id: { type: 'number', description: '种子歌曲或歌手 ID，缺省为当前播放' },
+        limit: { type: 'number', default: 20 },
+        play: { type: 'boolean', default: false },
+      },
+    },
+  },
 ]
 
 const invokeTool = async (name: string, args: Record<string, unknown>) => {
@@ -389,6 +413,7 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       const action = String(args.action)
       if (action === 'seek') return request('seek', { value: args.value, relative: args.relative })
       if (action === 'volume') return request('volume', { value: args.value })
+      if (action === 'chorus') return request('seek.chorus')
       return request(action)
     }
     case 'manage_queue': {
@@ -397,6 +422,11 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
     }
     case 'get_lyrics':
       return request('lyrics', args)
+    case 'get_similar': {
+      if (args.type === 'playlist') return request('similar.playlists', args)
+      if (args.type === 'artist') return request('similar.artists', args)
+      return request(args.play === true ? 'similar.play' : 'similar.songs', args)
+    }
     case 'get_spectrum_snapshot':
       return request('spectrum')
     case 'get_user_playlists':

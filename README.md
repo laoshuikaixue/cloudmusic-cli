@@ -97,8 +97,12 @@ ncm play 186016
 ncm pause
 ncm resume
 ncm seek +10
+ncm seek --chorus
 ncm volume 70
 ncm queue next 186016
+ncm similar
+ncm similar 186016 --play
+ncm similar --type playlist
 ncm status --json
 ncm lyrics 186016 --words
 ncm lyrics 186016 --no-upgrade

@@ -15,6 +15,7 @@ export type QueueContextType =
   | 'record'
   | 'toplist'
   | 'new'
+  | 'similar'
 export type ScrobbleMode = 'ncbl' | 'legacy'
 export type NewSongArea = 0 | 7 | 96 | 8 | 16
 

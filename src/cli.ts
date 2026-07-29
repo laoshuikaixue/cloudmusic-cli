@@ -213,9 +213,12 @@ program
   })
 
 program
-  .command('seek <value>')
-  .description('跳转到秒数；+10/-10 表示相对跳转')
-  .action(async (value: string) => {
+  .command('seek [value]')
+  .description('跳转到秒数；+10/-10 表示相对跳转；--chorus 跳到副歌')
+  .option('--chorus', '跳转到当前歌曲的副歌开始处')
+  .action(async (value: string | undefined, options) => {
+    if (options.chorus) return output(await withDaemon('seek.chorus'))
+    if (value === undefined) throw new Error('请提供目标秒数或使用 --chorus')
     const relative = value.startsWith('+') || value.startsWith('-')
     output(await withDaemon('seek', { value: Number(value), relative }))
   })
@@ -259,6 +262,47 @@ program
   .command('mode <mode>')
   .description('设置播放模式：sequence、repeat-one、shuffle')
   .action(async (mode) => output(await withDaemon('mode.set', { mode })))
+
+program
+  .command('similar [id]')
+  .description('基于当前歌曲或指定 ID 获取相似推荐')
+  .option('-t, --type <type>', '推荐类型：song、playlist、artist', 'song')
+  .option('-l, --limit <number>', '返回数量', '20')
+  .option('--play', '用相似歌曲替换队列并播放')
+  .action(async (id, options) => {
+    const type = String(options.type)
+    if (!['song', 'playlist', 'artist'].includes(type)) {
+      throw new Error('type 必须是 song、playlist 或 artist')
+    }
+    const params = {
+      ...(id ? { id: Number(id) } : {}),
+      limit: Number(options.limit),
+    }
+    if (type === 'song') {
+      if (options.play) return output(await withDaemon('similar.play', params))
+      const result = await withDaemon<{ songs: Song[] }>('similar.songs', params)
+      return output(result, () =>
+        result.songs.forEach((song, index) => console.log(formatSong(song, index))),
+      )
+    }
+    if (options.play) throw new Error('--play 仅支持 song 类型')
+    if (type === 'playlist') {
+      const result = await withDaemon<{ items: PlaylistSummary[] }>('similar.playlists', params)
+      return output(result, () =>
+        result.items.forEach((item, index) =>
+          console.log(`${index + 1}. ${item.name} · ${item.trackCount} 首 [${item.id}]`),
+        ),
+      )
+    }
+    const result = await withDaemon<{ items: CollectionSummary[] }>('similar.artists', params)
+    output(result, () =>
+      result.items.forEach((item, index) =>
+        console.log(
+          `${index + 1}. ${item.name}${item.subtitle ? ` — ${item.subtitle}` : ''} [${item.id}]`,
+        ),
+      ),
+    )
+  })
 
 program
   .command('lyrics [id]')

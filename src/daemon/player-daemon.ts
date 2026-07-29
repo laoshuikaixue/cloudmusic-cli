@@ -429,6 +429,28 @@ export class PlayerDaemon {
     return this.status()
   }
 
+  /** 跳转到当前歌曲的副歌开始处 */
+  async seekChorus() {
+    const song = this.song
+    if (!song) throw new AppError('NOT_PLAYING', '当前没有歌曲')
+    const chorus = await this.api.chorus(song.id)
+    if (!chorus) throw new AppError('CHORUS_NOT_FOUND', '该歌曲没有副歌数据')
+    return this.seek(chorus.startTime / 1000)
+  }
+
+  /** 基于种子歌曲的相似推荐替换队列并播放 */
+  private async playSimilar(seedId: number, limit: number, keepSeed: boolean) {
+    const seed = this.song?.id === seedId ? this.song : await this.api.songDetail(seedId)
+    const similar = await this.api.similarSongs(seedId, limit)
+    if (!similar.length) throw new AppError('SIMILAR_NOT_FOUND', '没有找到相似歌曲')
+    const songs = keepSeed ? [seed, ...similar.filter((song) => song.id !== seed.id)] : similar
+    return this.replaceQueue(songs, 0, {
+      type: 'similar',
+      id: seed.id,
+      name: `相似推荐 · ${seed.name}`,
+    })
+  }
+
   private async replaceQueue(
     songs: Song[],
     index: number,
@@ -639,6 +661,7 @@ export class PlayerDaemon {
       'next',
       'previous',
       'seek',
+      'seek.chorus',
       'volume',
       'mode.set',
       'queue.play',
@@ -649,6 +672,7 @@ export class PlayerDaemon {
       'queue.remove',
       'queue.move',
       'queue.clear',
+      'similar.play',
       'library.playlist.play',
       'library.playlist.create',
       'library.playlist.rename',
@@ -721,6 +745,8 @@ export class PlayerDaemon {
         return this.previous()
       case 'seek':
         return this.seek(numberParam(params.value, 'value'), Boolean(params.relative))
+      case 'seek.chorus':
+        return this.seekChorus()
       case 'volume':
         return this.volume(numberParam(params.value, 'value'))
       case 'mode.set':
@@ -828,6 +854,26 @@ export class PlayerDaemon {
         this.queue = { songs: [], index: -1 }
         await this.persistQueue()
         return this.queue
+      case 'similar.songs': {
+        const id = params.id ? numberParam(params.id, 'id') : this.song?.id
+        if (!id) throw new AppError('NOT_PLAYING', '当前没有歌曲，请指定歌曲 ID')
+        return { songs: await this.api.similarSongs(id, Number(params.limit || 20)) }
+      }
+      case 'similar.playlists': {
+        const id = params.id ? numberParam(params.id, 'id') : this.song?.id
+        if (!id) throw new AppError('NOT_PLAYING', '当前没有歌曲，请指定歌曲 ID')
+        return { items: await this.api.similarPlaylists(id, Number(params.limit || 20)) }
+      }
+      case 'similar.artists': {
+        const id = params.id ? numberParam(params.id, 'id') : this.song?.artists[0]?.id
+        if (!id) throw new AppError('NOT_PLAYING', '当前没有歌曲，请指定歌手 ID')
+        return { items: await this.api.similarArtists(id) }
+      }
+      case 'similar.play': {
+        const id = params.id ? numberParam(params.id, 'id') : this.song?.id
+        if (!id) throw new AppError('NOT_PLAYING', '当前没有歌曲，请指定歌曲 ID')
+        return this.playSimilar(id, Number(params.limit || 20), params.keepSeed !== false)
+      }
       case 'login.qr.start':
         return this.api.createQrLogin()
       case 'login.qr.check': {
