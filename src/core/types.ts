@@ -296,6 +296,10 @@ export interface QueueSnapshot {
   songs: Song[]
   index: number
   context?: QueueContext
+  /** 随机播放模式下,本轮尚未播放的歌曲 id 池 */
+  shufflePool?: number[]
+  /** 随机播放模式下,已切走歌曲 id 的回退栈 */
+  shuffleHistory?: number[]
 }
 
 export interface SourceResult {

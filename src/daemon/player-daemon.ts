@@ -2,6 +2,16 @@ import { execFile } from 'node:child_process'
 import { AudioPipeline } from '../audio/pipeline.js'
 import { NeteaseApi } from '../api/netease.js'
 import { AppError } from '../core/errors.js'
+import {
+  addShuffleIds,
+  emptyShuffleState,
+  newShuffleState,
+  nextShuffleIndex,
+  previousShuffleIndex,
+  removeShuffleId,
+  trackShuffleJump,
+  type ShuffleState,
+} from './shuffle.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
 import { findActiveBackgroundLyrics, getLyricContext } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
@@ -53,6 +63,7 @@ export class PlayerDaemon {
   private readonly api = new NeteaseApi(() => this.store.getCookie())
   private readonly pipeline = new AudioPipeline()
   private queue: QueueSnapshot = { songs: [], index: -1 }
+  private shuffleState: ShuffleState = emptyShuffleState()
   private history: HistoryEntry[] = []
   private activeHistorySong?: Song
   private config!: AppConfig
@@ -113,6 +124,9 @@ export class PlayerDaemon {
     this.queue = await this.store.loadSession()
     this.history = await this.store.loadHistory()
     if (this.queue.index >= this.queue.songs.length) this.queue.index = this.queue.songs.length - 1
+    this.shuffleState = this.queue.shufflePool
+      ? { pool: this.queue.shufflePool, history: this.queue.shuffleHistory ?? [] }
+      : newShuffleState(this.queue.songs, this.queue.index)
     this.classLink.configure(this.config.classLink, this.store.getClassLinkToken())
     this.pipeline.on('ended', () => {
       void this.enqueueControl(() => this.onEnded())
@@ -180,6 +194,8 @@ export class PlayerDaemon {
   }
 
   private async persistQueue() {
+    this.queue.shufflePool = this.shuffleState.pool
+    this.queue.shuffleHistory = this.shuffleState.history
     await this.store.saveSession(this.queue)
   }
 
@@ -275,9 +291,22 @@ export class PlayerDaemon {
   async playSong(id: number) {
     const existing = this.queue.songs.findIndex((song) => song.id === id)
     if (existing >= 0) {
+      this.shuffleState = trackShuffleJump(
+        this.queue.songs,
+        this.queue.index,
+        id,
+        this.shuffleState,
+      )
       this.queue.index = existing
     } else {
-      this.queue.songs.push(await this.api.songDetail(id))
+      const song = await this.api.songDetail(id)
+      this.shuffleState = trackShuffleJump(
+        this.queue.songs,
+        this.queue.index,
+        song.id,
+        this.shuffleState,
+      )
+      this.queue.songs.push(song)
       this.queue.index = this.queue.songs.length - 1
       this.queue.context = { type: 'manual', name: '手动播放' }
     }
@@ -338,6 +367,8 @@ export class PlayerDaemon {
       throw new AppError('INVALID_ARGUMENT', `不支持的播放模式：${mode}`)
     }
     this.config = await this.store.updateConfig({ mode })
+    this.shuffleState =
+      mode === 'shuffle' ? newShuffleState(this.queue.songs, this.queue.index) : emptyShuffleState()
     void this.smtc.sync(this.status()).catch(() => undefined)
     return this.status()
   }
@@ -398,10 +429,9 @@ export class PlayerDaemon {
       if (this.queue.index >= this.queue.songs.length - 2) await this.appendFmSongs()
       this.queue.index = Math.min(this.queue.index + 1, this.queue.songs.length - 1)
     } else if (this.config.mode === 'shuffle' && this.queue.songs.length > 1) {
-      let nextIndex = this.queue.index
-      while (nextIndex === this.queue.index)
-        nextIndex = Math.floor(Math.random() * this.queue.songs.length)
-      this.queue.index = nextIndex
+      const result = nextShuffleIndex(this.queue.songs, this.queue.index, this.shuffleState)
+      this.shuffleState = result.state
+      this.queue.index = result.index
     } else if (this.config.mode !== 'repeat-one' || !automatic) {
       this.queue.index = (this.queue.index + 1) % this.queue.songs.length
     }
@@ -413,7 +443,18 @@ export class PlayerDaemon {
   async previous() {
     if (!this.queue.songs.length) throw new AppError('QUEUE_EMPTY', '播放队列为空')
     if (this.pipeline.getPosition() > 5) return this.seek(0)
-    this.queue.index = (this.queue.index - 1 + this.queue.songs.length) % this.queue.songs.length
+    if (this.config.mode === 'shuffle' && this.queue.context?.type !== 'fm') {
+      const result = previousShuffleIndex(this.queue.songs, this.queue.index, this.shuffleState)
+      if (result) {
+        this.shuffleState = result.state
+        this.queue.index = result.index
+      } else {
+        this.queue.index =
+          (this.queue.index - 1 + this.queue.songs.length) % this.queue.songs.length
+      }
+    } else {
+      this.queue.index = (this.queue.index - 1 + this.queue.songs.length) % this.queue.songs.length
+    }
     await this.persistQueue()
     await this.startSong(this.song as Song)
     return this.status()
@@ -423,6 +464,12 @@ export class PlayerDaemon {
     if (index < 0 || index >= this.queue.songs.length) {
       throw new AppError('INVALID_ARGUMENT', '队列索引超出范围')
     }
+    this.shuffleState = trackShuffleJump(
+      this.queue.songs,
+      this.queue.index,
+      this.queue.songs[index]!.id,
+      this.shuffleState,
+    )
     this.queue.index = index
     await this.persistQueue()
     await this.startSong(this.song as Song)
@@ -462,6 +509,7 @@ export class PlayerDaemon {
       index: Math.max(0, Math.min(index, songs.length - 1)),
       context,
     }
+    this.shuffleState = newShuffleState(songs, Math.max(0, Math.min(index, songs.length - 1)))
     await this.persistQueue()
     await this.startSong(this.song as Song)
     return this.status()
@@ -796,14 +844,27 @@ export class PlayerDaemon {
         const ids = numberArrayParam(params.ids, 'ids')
         const songs = await Promise.all(ids.map((id) => this.api.songDetail(id)))
         this.queue.songs.push(...songs)
-        if (this.queue.index < 0) this.queue.index = 0
+        if (this.queue.index < 0) {
+          this.queue.index = 0
+          this.shuffleState = newShuffleState(this.queue.songs)
+        } else {
+          this.shuffleState = addShuffleIds(
+            this.shuffleState,
+            songs.map((song) => song.id),
+          )
+        }
         await this.persistQueue()
         return this.queue
       }
       case 'queue.add': {
         const song = await this.api.songDetail(numberParam(params.id, 'id'))
         this.queue.songs.push(song)
-        if (this.queue.index < 0) this.queue.index = 0
+        if (this.queue.index < 0) {
+          this.queue.index = 0
+          this.shuffleState = newShuffleState(this.queue.songs)
+        } else {
+          this.shuffleState = addShuffleIds(this.shuffleState, [song.id])
+        }
         await this.persistQueue()
         return this.queue
       }
@@ -819,7 +880,12 @@ export class PlayerDaemon {
         }
         const insertIndex = this.queue.index >= 0 ? this.queue.index + 1 : 0
         this.queue.songs.splice(insertIndex, 0, song)
-        if (this.queue.index < 0) this.queue.index = 0
+        if (this.queue.index < 0) {
+          this.queue.index = 0
+          this.shuffleState = newShuffleState(this.queue.songs)
+        } else {
+          this.shuffleState = addShuffleIds(this.shuffleState, [song.id])
+        }
         await this.persistQueue()
         return this.queue
       }
@@ -829,7 +895,9 @@ export class PlayerDaemon {
           throw new AppError('INVALID_ARGUMENT', '队列索引超出范围')
         }
         const removingCurrent = index === this.queue.index
+        const removed = this.queue.songs[index]!
         this.queue.songs.splice(index, 1)
+        this.shuffleState = removeShuffleId(this.shuffleState, removed.id)
         if (!this.queue.songs.length) {
           this.queue.index = -1
           await this.pipeline.stop()
@@ -865,6 +933,7 @@ export class PlayerDaemon {
       case 'queue.clear':
         await this.stop()
         this.queue = { songs: [], index: -1 }
+        this.shuffleState = emptyShuffleState()
         await this.persistQueue()
         return this.queue
       case 'similar.songs': {
