@@ -125,7 +125,13 @@ export class PlayerDaemon {
     this.history = await this.store.loadHistory()
     if (this.queue.index >= this.queue.songs.length) this.queue.index = this.queue.songs.length - 1
     this.shuffleState = this.queue.shufflePool
-      ? { pool: this.queue.shufflePool, history: this.queue.shuffleHistory ?? [] }
+      ? {
+          // 防御性净化:正在播放的歌曲不应留在未播池中
+          pool: this.queue.shufflePool.filter(
+            (id) => id !== this.queue.songs[this.queue.index]?.id,
+          ),
+          history: this.queue.shuffleHistory ?? [],
+        }
       : newShuffleState(this.queue.songs, this.queue.index)
     this.classLink.configure(this.config.classLink, this.store.getClassLinkToken())
     this.pipeline.on('ended', () => {
@@ -449,8 +455,15 @@ export class PlayerDaemon {
         this.shuffleState = result.state
         this.queue.index = result.index
       } else {
-        this.queue.index =
-          (this.queue.index - 1 + this.queue.songs.length) % this.queue.songs.length
+        // 无回退历史:退化为顺序前一首,同时维护未播池避免一轮内重复
+        const fallback = (this.queue.index - 1 + this.queue.songs.length) % this.queue.songs.length
+        this.shuffleState = trackShuffleJump(
+          this.queue.songs,
+          this.queue.index,
+          this.queue.songs[fallback]!.id,
+          this.shuffleState,
+        )
+        this.queue.index = fallback
       }
     } else {
       this.queue.index = (this.queue.index - 1 + this.queue.songs.length) % this.queue.songs.length
@@ -904,7 +917,15 @@ export class PlayerDaemon {
           await this.finalizeHistory()
           this.state = 'stopped'
         } else if (removingCurrent) {
-          this.queue.index = Math.min(index, this.queue.songs.length - 1)
+          const nextIndex = Math.min(index, this.queue.songs.length - 1)
+          // 顶替播放的歌曲要移出未播池,避免本轮再次被随机到
+          this.shuffleState = trackShuffleJump(
+            this.queue.songs,
+            this.queue.index,
+            this.queue.songs[nextIndex]!.id,
+            this.shuffleState,
+          )
+          this.queue.index = nextIndex
           await this.startSong(this.song as Song)
         } else if (index < this.queue.index) {
           this.queue.index -= 1
