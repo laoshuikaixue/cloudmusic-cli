@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import qrcode from 'qrcode-terminal'
-import { requestDaemonResilient, subscribeDaemon } from '../ipc/client.js'
+import {
+  isDaemonConnectionError,
+  requestDaemon,
+  requestDaemonResilient,
+  subscribeDaemon,
+} from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
 import { getPlayerLayout, renderProgressBar } from './layout.js'
 import {
@@ -438,11 +443,17 @@ export const NowPlaying = () => {
     if (completeExitInProgress.current) return
     completeExitInProgress.current = true
     setMessage('正在关闭播放器、后台服务和媒体进程…')
-    void callDaemon('shutdown')
+    // 与 `quit` 命令一致：不走 resilient 重试，连接错误说明 daemon 已停止，
+    // 无需重新拉起；其余失败（如超时）也保证退出，避免 TUI 卡死无法退出
+    void requestDaemon('shutdown', undefined, 5000)
       .then(() => exit())
       .catch((error) => {
-        completeExitInProgress.current = false
-        setMessage(error instanceof Error ? error.message : String(error))
+        setMessage(
+          isDaemonConnectionError(error)
+            ? '播放器后台已停止，正在退出…'
+            : `${error instanceof Error ? error.message : String(error)}，正在退出…`,
+        )
+        setTimeout(() => exit(), 500)
       })
   }
 
