@@ -1,8 +1,17 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { pickValidConfigPatch, sanitizeConfigPatch } from './config.js'
+import {
+  addListenedSeconds,
+  emptyLocalStats,
+  pruneLocalStats,
+  type LocalPlayStats,
+} from './local-stats.js'
 import { paths } from './paths.js'
-import type { AppConfig, ConfigPatch, HistoryEntry, QueueSnapshot } from './types.js'
+import type { AppConfig, ConfigPatch, HistoryEntry, QueueSnapshot, Song } from './types.js'
+
+/** 本地听歌统计保留的天数 */
+const LOCAL_STATS_DAYS = 365
 
 const defaultConfig: AppConfig = {
   quality: 'exhigh',
@@ -70,6 +79,7 @@ const mergeConfig = (base: AppConfig, patch: ConfigPatch): AppConfig => ({
 
 export class AppStore {
   private config: AppConfig = structuredClone(defaultConfig)
+  private localStats: LocalPlayStats = emptyLocalStats()
   private cookie = ''
   private classLinkToken = ''
 
@@ -83,6 +93,23 @@ export class AppStore {
     const auth = await readJson<{ cookie?: string; classLinkToken?: string }>(paths.authFile, {})
     this.cookie = auth.cookie || ''
     this.classLinkToken = auth.classLinkToken || ''
+    this.localStats = pruneLocalStats(
+      await readJson<LocalPlayStats>(paths.localStatsFile, emptyLocalStats()),
+      LOCAL_STATS_DAYS,
+    )
+  }
+
+  getLocalStats() {
+    return structuredClone(this.localStats)
+  }
+
+  /** 记录一段实际收听时长并落盘，按天累计 */
+  async recordLocalStats(song: Song, seconds: number, at = Date.now()) {
+    const next = addListenedSeconds(this.localStats, song, seconds, at)
+    if (next === this.localStats) return false
+    this.localStats = pruneLocalStats(next, LOCAL_STATS_DAYS)
+    await writeJson(paths.localStatsFile, this.localStats)
+    return true
   }
 
   getConfig() {

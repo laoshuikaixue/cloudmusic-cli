@@ -23,6 +23,7 @@ import {
   type SleepTimer,
 } from './sleep.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
+import { localStatsWindow, summarizeLocalStats, type LocalStatsRange } from '../core/local-stats.js'
 import { findActiveBackgroundLyrics, getLyricContext } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
 import { ClassLinkBridge } from '../system/classlink.js'
@@ -251,11 +252,13 @@ export class PlayerDaemon {
   private async finalizeHistory() {
     const active = this.activeHistorySong
     if (!active) return
+    const seconds = Math.max(0, Math.floor(this.scrobblePlayedSeconds))
     const key = this.historyKey(active)
     const entry = this.history.find((item) => this.historyKey(item.song) === key)
-    if (entry) entry.listenedSeconds += Math.max(0, Math.floor(this.scrobblePlayedSeconds))
+    if (entry) entry.listenedSeconds += seconds
     this.activeHistorySong = undefined
     await this.store.saveHistory(this.history)
+    if (seconds > 0) await this.store.recordLocalStats(active, seconds)
   }
 
   private async recordHistory(song: Song) {
@@ -1304,6 +1307,14 @@ export class PlayerDaemon {
             ? (params.type as 'month' | 'year')
             : 'week'
         return this.api.listenStats(type)
+      }
+      case 'stats.local': {
+        const range: LocalStatsRange =
+          params.type === 'today' || params.type === 'month' || params.type === 'year'
+            ? (params.type as LocalStatsRange)
+            : 'week'
+        const { from, to } = localStatsWindow(Date.now(), range)
+        return summarizeLocalStats(this.store.getLocalStats(), from, to, Number(params.limit || 20))
       }
       case 'stats.today':
         return this.api.todayListenSongs()

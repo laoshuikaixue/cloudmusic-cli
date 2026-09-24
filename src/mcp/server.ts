@@ -447,6 +447,18 @@ const tools = [
     },
   },
   {
+    name: 'get_local_listen_stats',
+    description:
+      '本机听歌统计：按天累计的实际收听时长与 TOP 歌曲，不依赖服务端报告接口；范围为从今天往回数的滚动窗口。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', enum: ['today', 'week', 'month', 'year'], default: 'week' },
+        limit: { type: 'number', default: 20 },
+      },
+    },
+  },
+  {
     name: 'get_recent_songs',
     description: '服务端最近播放记录（跨设备）；play 为 true 时替换队列并播放。',
     inputSchema: {
@@ -502,6 +514,8 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
     }
     case 'get_listen_stats':
       return request(args.today === true ? 'stats.today' : 'stats.listen', args)
+    case 'get_local_listen_stats':
+      return request('stats.local', args)
     case 'get_recent_songs':
       return request(args.play === true ? 'library.recent.play' : 'library.recent', args)
     case 'daily_signin':

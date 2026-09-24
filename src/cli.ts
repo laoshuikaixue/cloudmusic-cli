@@ -14,6 +14,7 @@ import {
   isQualityLevel,
 } from './core/config.js'
 import { formatSleepRemaining } from './daemon/sleep.js'
+import type { LocalStatsSummary } from './core/local-stats.js'
 import { VERSION } from './version.js'
 import type {
   AppConfig,
@@ -384,7 +385,37 @@ program
   .option('--month', '查看月报告')
   .option('--year', '查看年报告')
   .option('--today', '查看今日听歌歌曲')
+  .option('--local', '使用本机播放记录统计，不依赖服务端报告接口')
   .action(async (options) => {
+    if (options.local) {
+      const type = options.year
+        ? 'year'
+        : options.month
+          ? 'month'
+          : options.today
+            ? 'today'
+            : 'week'
+      const summary = await withDaemon<LocalStatsSummary>('stats.local', { type })
+      return output(summary, () => {
+        console.log(
+          `本机记录 ${summary.from} ~ ${summary.to}：${Math.round(summary.totalSeconds / 60)} 分钟 · ${summary.activeDays} 天 · ${summary.songCount} 首`,
+        )
+        if (summary.topSongs.length) {
+          console.log('收听 TOP 歌曲：')
+          summary.topSongs.forEach((item, index) =>
+            console.log(
+              `  ${index + 1}. ${item.song.name} — ${item.song.artists.join(' / ')} · ${Math.round(item.seconds / 60)} 分钟 [${item.song.id}]`,
+            ),
+          )
+        }
+        if (summary.daily.length) {
+          console.log('每日时长：')
+          summary.daily.forEach((day) =>
+            console.log(`  ${day.date}  ${Math.round(day.seconds / 60)} 分钟`),
+          )
+        }
+      })
+    }
     if (options.today) {
       const songs = await withDaemon<TodayListenSong[]>('stats.today')
       return output(songs, () =>

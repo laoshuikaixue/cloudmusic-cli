@@ -13,6 +13,7 @@ CloudMusic CLI 是一个以终端为主要交互界面的网易云音乐播放�
 - 网易云账号：二维码登录、Cookie 登录、持久化会话、用户资料、喜欢歌曲和自建歌单管理
 - 内容发现：多类型搜索、每日推荐、歌单广场、精品歌单、官方榜单、新歌速递、私人 FM 和心动模式
 - 完整音乐库：账号歌单、收藏专辑、关注歌手、音乐云盘、最近播放和听歌排行
+- 本地听歌统计：按天记录本机实际收听秒数，离线可查今日/7 天/30 天/365 天的时长、活跃天数与 TOP 歌曲
 - 播放控制：播放/暂停、精确 Seek、音量、0.5-2.0 倍速、响度归一、淡入淡出、睡眠定时和可编辑播放队列
 - 歌词与可视化：LRC、网易云 YRC、QQ QRC、AMLL TTML 逐字歌词，支持翻译、罗马音、对唱/背景行以及基于真实 PCM 的 64 频带频谱
 - 歌词显示：可在仅原文、原文+译文、仅译文、仅罗马音之间切换，逐字高亮与背景人声行可独立开关，
@@ -120,6 +121,8 @@ ncm similar --type playlist
 ncm stats
 ncm stats --year
 ncm stats --today
+ncm stats --local
+ncm stats --local --month
 ncm signin
 ncm status --json
 ncm lyrics 186016 --words

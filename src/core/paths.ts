@@ -14,6 +14,7 @@ export const paths = {
   authFile: join(appPaths.config, 'auth.json'),
   sessionFile: join(appPaths.data, 'session.json'),
   historyFile: join(appPaths.data, 'history.json'),
+  localStatsFile: join(appPaths.data, 'local-stats.json'),
   daemonLog: join(appPaths.log, 'daemon.log'),
   smtcCoverFile: join(appPaths.data, 'smtc-cover.jpg'),
   daemonSocket:
