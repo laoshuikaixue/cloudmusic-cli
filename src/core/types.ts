@@ -222,6 +222,8 @@ export interface PlaybackStatus {
   sourceName?: string
   trial: boolean
   quality?: string
+  /** 用户设定的音质，与实际音质不同时说明发生了降级 */
+  requestedQuality?: string
   queueLength: number
   queueIndex: number
   queueContext?: QueueContext
@@ -247,6 +249,7 @@ export interface PlaybackStatus {
   lyricSource?: LyricSource
   lyricsUpgraded?: boolean
   spectrumGeneration?: number
+  sourceFailure?: SourceFailure
   error?: string
 }
 
@@ -261,6 +264,10 @@ export interface ClassLinkStatus {
 
 export interface AppConfig {
   quality: string
+  /** 目标音质不可用时是否沿音质阶梯降级 */
+  qualityFallback: boolean
+  /** 单曲取不到音源时是否自动切到下一首 */
+  skipOnError: boolean
   volume: number
   mode: PlaybackMode
   allowTrial: boolean
@@ -292,6 +299,22 @@ export interface AppConfig {
   }
 }
 
+/** 允许只填部分字段的配置补丁 */
+export interface ConfigPatch {
+  quality?: string
+  qualityFallback?: boolean
+  skipOnError?: boolean
+  volume?: number
+  mode?: PlaybackMode
+  allowTrial?: boolean
+  unblock?: Partial<AppConfig['unblock']>
+  binaries?: Partial<AppConfig['binaries']>
+  scrobble?: Partial<AppConfig['scrobble']>
+  smtc?: Partial<AppConfig['smtc']>
+  classLink?: Partial<AppConfig['classLink']>
+  lyrics?: Partial<AppConfig['lyrics']>
+}
+
 export interface QueueSnapshot {
   songs: Song[]
   index: number
@@ -308,6 +331,30 @@ export interface SourceResult {
   sourceName?: string
   trial: boolean
   quality?: string
+  /** 用户设定的目标音质，与实际拿到的音质不同时说明发生了降级 */
+  requestedQuality?: string
+}
+
+/** 无法播放的原因分类，字段值全部来自接口真实响应 */
+export type SourceFailureReason =
+  | 'no_copyright'
+  | 'region_blocked'
+  | 'vip_required'
+  | 'trial_disabled'
+  | 'no_url'
+  | 'request_failed'
+
+export interface SourceFailure {
+  reason: SourceFailureReason
+  message: string
+  /** 接口返回的 fee 原值：0 免费 / 1 VIP / 4 需购买 / 8 受限音质 */
+  fee?: number
+  /** 逐个音质档位尝试后仍失败时，记录每档的 data[].code */
+  triedLevels?: { level: string; code?: number }[]
+}
+
+export interface SourceUnavailableError {
+  failure: SourceFailure
 }
 
 export interface RpcRequest {

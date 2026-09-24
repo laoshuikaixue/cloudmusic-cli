@@ -6,12 +6,15 @@ import {
   requestDaemon,
   subscribeDaemon,
 } from './ipc/client.js'
-import { toAppError } from './core/errors.js'
+import { AppError, toAppError } from './core/errors.js'
+import { QUALITY_LEVELS, isQualityLevel } from './core/config.js'
 import { VERSION } from './version.js'
 import type {
+  AppConfig,
   ClassLinkStatus,
   CommentPage,
   CollectionSummary,
+  ConfigPatch,
   ListenStats,
   LyricResult,
   OutputEnvelope,
@@ -791,6 +794,49 @@ source
       }),
     ),
   )
+source
+  .command('quality [level]')
+  .description(`查看或设置播放音质，可选 ${QUALITY_LEVELS.join(' / ')}`)
+  .option('--fallback <state>', 'on 或 off，控制音质不可用时是否自动降级')
+  .action(async (level, options) => {
+    if (options.fallback !== undefined && !['on', 'off'].includes(options.fallback)) {
+      throw new AppError('INVALID_ARGUMENT', '--fallback 只接受 on 或 off')
+    }
+    const patch: ConfigPatch = {}
+    if (level !== undefined) {
+      if (!isQualityLevel(level)) {
+        throw new AppError('INVALID_ARGUMENT', `音质必须是 ${QUALITY_LEVELS.join(' / ')} 之一`)
+      }
+      patch.quality = level
+    }
+    if (options.fallback !== undefined) patch.qualityFallback = options.fallback === 'on'
+    if (!Object.keys(patch).length) {
+      const config = await withDaemon<AppConfig>('config.get')
+      return output(
+        {
+          quality: config.quality,
+          qualityFallback: config.qualityFallback,
+          levels: QUALITY_LEVELS,
+        },
+        () => {
+          console.log(
+            `当前音质：${config.quality} · 自动降级：${config.qualityFallback ? '开启' : '关闭'}`,
+          )
+          console.log(`可选档位：${QUALITY_LEVELS.join(' ')}`)
+        },
+      )
+    }
+    output(await withDaemon('config.set', { patch }))
+  })
+source
+  .command('auto-skip <state>')
+  .description('取不到音源时是否自动切到下一首：on 或 off')
+  .action(async (state) => {
+    if (!['on', 'off'].includes(state)) {
+      throw new AppError('INVALID_ARGUMENT', 'auto-skip 只接受 on 或 off')
+    }
+    output(await withDaemon('config.set', { patch: { skipOnError: state === 'on' } }))
+  })
 source
   .command('test <id>')
   .action(async (id) => output(await withDaemon('source.test', { id: Number(id) })))

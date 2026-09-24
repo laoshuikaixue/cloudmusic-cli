@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process'
 import { AudioPipeline } from '../audio/pipeline.js'
 import { NeteaseApi } from '../api/netease.js'
-import { AppError } from '../core/errors.js'
+import { AppError, isSourceUnavailable } from '../core/errors.js'
+import { sanitizeConfigPatch } from '../core/config.js'
 import {
   addShuffleIds,
   emptyShuffleState,
@@ -27,8 +28,16 @@ import type {
   PlaybackStatus,
   QueueSnapshot,
   Song,
+  SourceFailure,
   SourceResult,
 } from '../core/types.js'
+
+/** 自动切歌时连续取源失败的上限，避免整队不可播时无限循环 */
+const MAX_CONSECUTIVE_FAILURES = 5
+const SKIP_ON_ERROR_DELAY_MS = 1000
+
+const delay = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 
 const numberParam = (value: unknown, name: string) => {
   const number = Number(value)
@@ -80,6 +89,8 @@ export class PlayerDaemon {
     upgraded: false,
   }
   private error?: string
+  private sourceFailure?: SourceFailure
+  private consecutiveFailures = 0
   private cycle = 0
   private scrobbledCycle = -1
   private scrobblePlayedSeconds = 0
@@ -245,6 +256,7 @@ export class PlayerDaemon {
     await this.finalizeHistory()
     this.state = 'loading'
     this.error = undefined
+    this.sourceFailure = undefined
     this.resetPlaybackCycle()
     const cycle = this.cycle
     this.lyricResult = {
@@ -256,15 +268,28 @@ export class PlayerDaemon {
     this.lyrics = []
     this.lyricRevision += 1
     this.syncClassLink()
-    const [source, lyricResult] = await Promise.all([
-      this.api.resolveSource(song.id, this.config),
-      this.api.lyrics(song.id).catch((): LyricResult => ({
-        lines: [],
-        format: 'lrc',
-        source: 'netease',
-        upgraded: false,
-      })),
-    ])
+    let source: SourceResult
+    let lyricResult: LyricResult
+    try {
+      const resolved = await Promise.all([
+        this.api.resolveSource(song.id, this.config),
+        this.api.lyrics(song.id).catch((): LyricResult => ({
+          lines: [],
+          format: 'lrc',
+          source: 'netease',
+          upgraded: false,
+        })),
+      ])
+      source = resolved[0]
+      lyricResult = resolved[1]
+    } catch (error) {
+      this.state = 'error'
+      this.error = error instanceof Error ? error.message : String(error)
+      this.sourceFailure = isSourceUnavailable(error) ? error.failure : undefined
+      this.syncClassLink()
+      throw error
+    }
+    this.consecutiveFailures = 0
     this.source = source
     this.currentUrl = source.url
     this.sourceResolvedAt = Date.now()
@@ -321,9 +346,33 @@ export class PlayerDaemon {
     return this.status()
   }
 
+  /** 自动切歌：取不到音源时按上限继续向后尝试，手动切歌保持原样报错 */
+  private async advanceAutomatically() {
+    const limit = Math.min(MAX_CONSECUTIVE_FAILURES, Math.max(1, this.queue.songs.length))
+    if (!this.config.skipOnError || this.queue.songs.length < 2) {
+      await this.next(true)
+      return
+    }
+    while (this.consecutiveFailures < limit) {
+      try {
+        await this.next(true)
+        return
+      } catch (error) {
+        if (!isSourceUnavailable(error)) throw error
+        this.consecutiveFailures += 1
+        if (this.consecutiveFailures >= limit) break
+        await delay(SKIP_ON_ERROR_DELAY_MS)
+      }
+    }
+    throw new AppError(
+      'MAX_CONSECUTIVE_FAILURES',
+      `连续 ${this.consecutiveFailures} 首歌曲没有可播放音源，已停止自动切换`,
+    )
+  }
+
   private async onEnded() {
     if (this.state === 'stopped' || this.state === 'idle') return
-    await this.next(true).catch((error) => {
+    await this.advanceAutomatically().catch((error) => {
       this.state = 'error'
       this.error = error instanceof Error ? error.message : String(error)
       this.syncClassLink()
@@ -448,8 +497,11 @@ export class PlayerDaemon {
 
   async previous() {
     if (!this.queue.songs.length) throw new AppError('QUEUE_EMPTY', '播放队列为空')
+    if (this.queue.context?.type === 'fm') {
+      throw new AppError('FM_NO_PREVIOUS', '私人 FM 不支持上一首，可用 d 丢弃当前歌曲')
+    }
     if (this.pipeline.getPosition() > 5) return this.seek(0)
-    if (this.config.mode === 'shuffle' && this.queue.context?.type !== 'fm') {
+    if (this.config.mode === 'shuffle') {
       const result = previousShuffleIndex(this.queue.songs, this.queue.index, this.shuffleState)
       if (result) {
         this.shuffleState = result.state
@@ -650,6 +702,7 @@ export class PlayerDaemon {
       sourceName: this.source?.sourceName,
       trial: this.source?.trial || false,
       quality: this.source?.quality,
+      requestedQuality: this.source?.requestedQuality || this.config.quality,
       queueLength: this.queue.songs.length,
       queueIndex: this.queue.index,
       queueContext: this.queue.context,
@@ -668,6 +721,7 @@ export class PlayerDaemon {
       lyricSource: this.lyricResult.source,
       lyricsUpgraded: this.lyricResult.upgraded,
       spectrumGeneration: this.pipeline.getSpectrumGeneration(),
+      sourceFailure: this.sourceFailure,
       error: this.error,
     }
   }
@@ -1258,8 +1312,10 @@ export class PlayerDaemon {
       case 'config.get':
         return this.store.getConfig()
       case 'config.set': {
-        const patch = params.patch as Partial<AppConfig>
-        this.config = await this.store.updateConfig(patch || {})
+        const { mode, ...rest } = sanitizeConfigPatch(params.patch)
+        if (mode !== undefined) await this.setMode(mode)
+        if (Object.keys(rest).length) this.config = await this.store.updateConfig(rest)
+        else if (mode !== undefined) this.config = this.store.getConfig()
         this.classLink.configure(this.config.classLink, this.store.getClassLinkToken())
         this.syncClassLink()
         return this.config
@@ -1301,7 +1357,7 @@ export class PlayerDaemon {
       inspect(this.config.binaries.ffmpeg || 'ffmpeg', '-version'),
     ])
     return {
-      node: { ok: Number(process.versions.node.split('.')[0]) >= 20, version: process.version },
+      node: { ok: Number(process.versions.node.split('.')[0]) >= 22, version: process.version },
       mpv,
       ffmpeg,
       api: apiStatus,

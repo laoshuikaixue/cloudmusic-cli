@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { ensureDaemon, requestDaemonResilient } from '../ipc/client.js'
+import { QUALITY_LEVELS } from '../core/config.js'
 import { VERSION } from '../version.js'
 import type { AppConfig } from '../core/types.js'
 
@@ -351,14 +352,14 @@ const tools = [
   },
   {
     name: 'configure_player',
-    description: '配置音质、解灰、试听、听歌上报开关和 NCBL/legacy 上报方式。',
+    description:
+      '配置音质、音质降级、取源失败自动切歌、解灰、试听、听歌上报开关和 NCBL/legacy 上报方式。',
     inputSchema: {
       type: 'object',
       properties: {
-        quality: {
-          type: 'string',
-          enum: ['standard', 'higher', 'exhigh', 'lossless', 'hires'],
-        },
+        quality: { type: 'string', enum: [...QUALITY_LEVELS] },
+        qualityFallback: { type: 'boolean' },
+        skipOnError: { type: 'boolean' },
         unblockEnabled: { type: 'boolean' },
         allowTrial: { type: 'boolean' },
         scrobbleEnabled: { type: 'boolean' },
@@ -542,6 +543,10 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('config.set', {
         patch: {
           ...(typeof args.quality === 'string' ? { quality: args.quality } : {}),
+          ...(typeof args.qualityFallback === 'boolean'
+            ? { qualityFallback: args.qualityFallback }
+            : {}),
+          ...(typeof args.skipOnError === 'boolean' ? { skipOnError: args.skipOnError } : {}),
           ...(typeof args.allowTrial === 'boolean' ? { allowTrial: args.allowTrial } : {}),
           ...(typeof args.unblockEnabled === 'boolean'
             ? { unblock: { ...current.unblock, enabled: args.unblockEnabled } }

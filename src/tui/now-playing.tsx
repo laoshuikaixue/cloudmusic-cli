@@ -8,6 +8,7 @@ import {
   subscribeDaemon,
 } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
+import { QUALITY_LEVELS, type QualityLevel } from '../core/config.js'
 import { getPlayerLayout, renderProgressBar } from './layout.js'
 import {
   getLyricLineTransition,
@@ -1175,48 +1176,10 @@ export const NowPlaying = () => {
   }
 
   const changeSetting = async (index: number, direction = 1) => {
-    if (!settingsConfig) return
+    const entry = settingEntries[index]
+    if (!entry?.apply) return
     try {
-      if (index === 5) {
-        await callDaemon('smtc.set', { enabled: !settingsConfig.smtc.enabled })
-      } else {
-        let patch: Partial<AppConfig> = {}
-        if (index === 0) {
-          patch = {
-            scrobble: {
-              ...settingsConfig.scrobble,
-              enabled: !settingsConfig.scrobble.enabled,
-              configured: true,
-            },
-          }
-        }
-        if (index === 1) {
-          patch = {
-            scrobble: {
-              ...settingsConfig.scrobble,
-              mode: settingsConfig.scrobble.mode === 'ncbl' ? 'legacy' : 'ncbl',
-              configured: true,
-            },
-          }
-        }
-        if (index === 2) {
-          const levels = ['standard', 'higher', 'exhigh', 'lossless', 'hires']
-          const current = Math.max(0, levels.indexOf(settingsConfig.quality))
-          patch = { quality: levels[(current + direction + levels.length) % levels.length] }
-        }
-        if (index === 3) {
-          patch = {
-            unblock: { ...settingsConfig.unblock, enabled: !settingsConfig.unblock.enabled },
-          }
-        }
-        if (index === 4) patch = { allowTrial: !settingsConfig.allowTrial }
-        if (index === 6) {
-          patch = {
-            lyrics: { ...settingsConfig.lyrics, upgrade: !settingsConfig.lyrics.upgrade },
-          }
-        }
-        await callDaemon('config.set', { patch })
-      }
+      await entry.apply(direction)
       await refreshSettingsState()
       setMessage('设置已保存')
     } catch (error) {
@@ -1703,16 +1666,15 @@ export const NowPlaying = () => {
     if (mode === 'settings') {
       if (key.escape || controlInput === 'o' || input === ',') return setMode('normal')
       if (key.upArrow) return setSettingsIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setSettingsIndex((index) => Math.min(8, index + 1))
-      if (settingsIndex === 7 && (key.rightArrow || key.return || input === ' ')) {
-        return void openClassLinkPage()
+      if (key.downArrow) {
+        return setSettingsIndex((index) => Math.min(settingEntries.length - 1, index + 1))
       }
-      if (settingsIndex === 8 && (key.rightArrow || key.return || input === ' ')) {
-        return void openAccountPage()
-      }
-      if (settingsIndex >= 7) return
-      if (key.leftArrow) void changeSetting(settingsIndex, -1)
-      if (key.rightArrow || key.return || input === ' ') void changeSetting(settingsIndex, 1)
+      const entry = settingEntries[settingsIndex]
+      const activate = key.rightArrow || key.return || input === ' '
+      if (entry?.open && activate) return void entry.open()
+      if (!entry?.apply) return
+      if (key.leftArrow && entry.cycle) void changeSetting(settingsIndex, -1)
+      if (activate) void changeSetting(settingsIndex, 1)
       return
     }
 
@@ -1839,6 +1801,11 @@ export const NowPlaying = () => {
     shuffle: '随机播放',
   }
   const sourceLabel = status.source === 'unblock' ? `解灰 · ${status.sourceName || 'auto'}` : null
+  const qualityLabel = status.quality || '未知音质'
+  const degradedQuality =
+    Boolean(status.quality) &&
+    Boolean(status.requestedQuality) &&
+    status.quality !== status.requestedQuality
   const stateIcon =
     status.state === 'playing'
       ? '▶'
@@ -1870,33 +1837,118 @@ export const NowPlaying = () => {
   const commentStart = Math.max(0, Math.min(commentIndex - 2, comments.length - 6))
   const visibleComments = comments.slice(commentStart, commentStart + 6)
   const shownInput = inputValue.slice(-Math.max(12, terminalWidth - 18))
-  const settingsRows: Array<[string, string]> = settingsConfig
+  const cycleQuality = (quality: string, direction: number) => {
+    const current = Math.max(0, QUALITY_LEVELS.indexOf(quality as QualityLevel))
+    return QUALITY_LEVELS[
+      (current + direction + QUALITY_LEVELS.length) % QUALITY_LEVELS.length
+    ] as string
+  }
+  const accountLabel = account.loggedIn
+    ? account.profile?.nickname || String(account.profile?.userId)
+    : '未登录'
+  const classLinkLabel = classLinkStatus
+    ? classLinkStatus.connected
+      ? '已连接'
+      : settingsConfig?.classLink.enabled
+        ? classLinkStatus.configured
+          ? '等待连接'
+          : '缺少令牌'
+        : classLinkStatus.configured
+          ? '关闭（已配置）'
+          : '未配置'
+    : '加载中'
+  const settingEntries: Array<{
+    label: string
+    value: string
+    cycle?: boolean
+    apply?: (direction: number) => Promise<unknown>
+    open?: () => void
+  }> = settingsConfig
     ? [
-        ['听歌上报', settingsConfig.scrobble.enabled ? '开启' : '关闭'],
-        ['上报方式', settingsConfig.scrobble.mode === 'ncbl' ? 'NCBL (PLV/PLD)' : 'Legacy'],
-        ['默认音质', settingsConfig.quality],
-        ['解灰回退', settingsConfig.unblock.enabled ? '开启' : '关闭'],
-        ['官方试听', settingsConfig.allowTrial ? '允许' : '关闭'],
-        ['Windows SMTC', settingsConfig.smtc.enabled ? '开启' : '关闭'],
-        ['歌词升级', settingsConfig.lyrics.upgrade ? 'TTML / QRC' : '关闭'],
-        [
-          'ClassLink',
-          classLinkStatus?.connected
-            ? '已连接'
-            : settingsConfig.classLink.enabled
-              ? classLinkStatus?.configured
-                ? '等待连接'
-                : '缺少令牌'
-              : classLinkStatus?.configured
-                ? '关闭（已配置）'
-                : '未配置',
-        ],
-        [
-          '网易云账号',
-          account.loggedIn
-            ? account.profile?.nickname || String(account.profile?.userId)
-            : '未登录',
-        ],
+        {
+          label: '听歌上报',
+          value: settingsConfig.scrobble.enabled ? '开启' : '关闭',
+          apply: () =>
+            callDaemon('config.set', {
+              patch: {
+                scrobble: {
+                  ...settingsConfig.scrobble,
+                  enabled: !settingsConfig.scrobble.enabled,
+                  configured: true,
+                },
+              },
+            }),
+        },
+        {
+          label: '上报方式',
+          value: settingsConfig.scrobble.mode === 'ncbl' ? 'NCBL (PLV/PLD)' : 'Legacy',
+          apply: () =>
+            callDaemon('config.set', {
+              patch: {
+                scrobble: {
+                  ...settingsConfig.scrobble,
+                  mode: settingsConfig.scrobble.mode === 'ncbl' ? 'legacy' : 'ncbl',
+                  configured: true,
+                },
+              },
+            }),
+        },
+        {
+          label: '默认音质',
+          value: settingsConfig.quality,
+          cycle: true,
+          apply: (direction) =>
+            callDaemon('config.set', {
+              patch: { quality: cycleQuality(settingsConfig.quality, direction) },
+            }),
+        },
+        {
+          label: '音质降级',
+          value: settingsConfig.qualityFallback ? '自动回退' : '关闭',
+          apply: () =>
+            callDaemon('config.set', {
+              patch: { qualityFallback: !settingsConfig.qualityFallback },
+            }),
+        },
+        {
+          label: '解灰回退',
+          value: settingsConfig.unblock.enabled ? '开启' : '关闭',
+          apply: () =>
+            callDaemon('config.set', {
+              patch: {
+                unblock: { ...settingsConfig.unblock, enabled: !settingsConfig.unblock.enabled },
+              },
+            }),
+        },
+        {
+          label: '官方试听',
+          value: settingsConfig.allowTrial ? '允许' : '关闭',
+          apply: () =>
+            callDaemon('config.set', { patch: { allowTrial: !settingsConfig.allowTrial } }),
+        },
+        {
+          label: '失败跳过',
+          value: settingsConfig.skipOnError ? '自动切歌' : '关闭',
+          apply: () =>
+            callDaemon('config.set', { patch: { skipOnError: !settingsConfig.skipOnError } }),
+        },
+        {
+          label: 'Windows SMTC',
+          value: settingsConfig.smtc.enabled ? '开启' : '关闭',
+          apply: () => callDaemon('smtc.set', { enabled: !settingsConfig.smtc.enabled }),
+        },
+        {
+          label: '歌词升级',
+          value: settingsConfig.lyrics.upgrade ? 'TTML / QRC' : '关闭',
+          apply: () =>
+            callDaemon('config.set', {
+              patch: {
+                lyrics: { ...settingsConfig.lyrics, upgrade: !settingsConfig.lyrics.upgrade },
+              },
+            }),
+        },
+        { label: 'ClassLink', value: classLinkLabel, open: openClassLinkPage },
+        { label: '网易云账号', value: accountLabel, open: openAccountPage },
       ]
     : []
   const classLinkRows: Array<[string, string]> =
@@ -2218,10 +2270,10 @@ export const NowPlaying = () => {
       {mode === 'settings' ? (
         <>
           <Text bold>设置（↑/↓ 选择，←/→/Enter 修改，o/,/Esc 返回）</Text>
-          {settingsRows.map(([label, value], index) => (
-            <Text key={label} color={index === settingsIndex ? 'cyan' : undefined}>
+          {settingEntries.map((entry, index) => (
+            <Text key={entry.label} color={index === settingsIndex ? 'cyan' : undefined}>
               {index === settingsIndex ? '▶ ' : '  '}
-              {label.padEnd(12, ' ')} {value}
+              {entry.label.padEnd(12, ' ')} {entry.value}
             </Text>
           ))}
           <Text dimColor>听歌上报按真实播放时长自动触发，每个播放周期只提交一次。</Text>
@@ -2339,7 +2391,8 @@ export const NowPlaying = () => {
           <Text dimColor> {formatTime(status.duration)}</Text>
         </Box>
         <Text dimColor>
-          {modeLabel[status.mode]} · 音量 {status.volume}% · {status.quality || '未知音质'}
+          {modeLabel[status.mode]} · 音量 {status.volume}% · {qualityLabel}
+          {degradedQuality ? `（降自 ${status.requestedQuality}）` : ''}
           {sourceLabel ? ` · ${sourceLabel}` : ''}
         </Text>
         <Text dimColor>

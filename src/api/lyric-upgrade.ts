@@ -1,9 +1,10 @@
+import { LruMap } from '../core/lru.js'
 import { getQqLyrics, searchQqSongs, type QqSongCandidate } from './qqmusic.js'
 import { evaluateLyricMatch, pickBestLyricCandidate } from '../core/lyric-match.js'
 import { attachSupplementalLyrics, parseQrc, parseTtml } from '../core/lyrics.js'
 import type { AppConfig, LyricResult, Song } from '../core/types.js'
 
-const ttmlCache = new Map<string, Promise<string | null>>()
+const ttmlCache = new LruMap<string, Promise<string | null>>(300)
 
 const fetchTtmlOnce = async (config: AppConfig, platform: 'netease' | 'qqmusic', id: string) => {
   const template = config.lyrics.amllDbServer

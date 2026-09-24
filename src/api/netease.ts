@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module'
-import { AppError } from '../core/errors.js'
+import { AppError, describeSourceFailure, SourceUnavailableError } from '../core/errors.js'
+import { qualityChain } from '../core/config.js'
+import { LruMap } from '../core/lru.js'
 import { parseNeteaseLyrics } from '../core/lyrics.js'
 import { upgradeLyrics } from './lyric-upgrade.js'
 import type {
@@ -20,6 +22,7 @@ import type {
   SigninResult,
   SigninTaskResult,
   Song,
+  SourceFailure,
   SourceResult,
   TodayListenSong,
   UserProfile,
@@ -35,6 +38,65 @@ const api = require('@neteasecloudmusicapienhanced/api') as Record<
 let initializePromise: Promise<void> | undefined
 
 const bodyOf = <T = any>(response: any): T => (response?.body ?? response) as T
+
+/** 依赖库以 { status, body } 形态抛出错误，body 里没有 message，需要按真实字段取值 */
+const apiErrorMessage = (error: any): string => {
+  const body = typeof error?.body === 'object' && error?.body !== null ? error.body : undefined
+  const text = body?.message || body?.msg
+  if (typeof text === 'string' && text.trim()) return text.trim()
+  if (typeof error?.message === 'string' && error.message.trim()) return error.message.trim()
+  if (typeof body?.code === 'number') return `接口返回错误码 ${body.code}`
+  return '未知错误'
+}
+
+/** 依赖库会把错误响应和解灰后的播放地址写到 stdout，这里改道 stderr 并抹掉凭据与签名地址 */
+let stdoutGuardDepth = 0
+const REDACTED = '[已隐藏]'
+const sensitiveKey = /^(cookie|set-cookie|__csrf|music_u|osver|deviceid)$/i
+const signedUrlPattern = /https?:\/\/\S{60,}/gi
+const signedUrlTest = /https?:\/\/\S{60,}/i
+
+const toSafeText = (value: unknown): string => {
+  const stringify = (input: unknown): string => {
+    if (typeof input === 'string') return input.replace(signedUrlPattern, REDACTED)
+    if (typeof input === 'object' && input !== null) {
+      return JSON.stringify(input, (key, item) =>
+        sensitiveKey.test(key) || (typeof item === 'string' && signedUrlTest.test(item))
+          ? REDACTED
+          : stringify(item),
+      )
+    }
+    return String(input)
+  }
+  return stringify(value)
+}
+
+const withStdoutGuard = async <T>(operation: () => Promise<T>): Promise<T> => {
+  const originals: [typeof console.log, typeof console.info, typeof console.warn] = [
+    console.log,
+    console.info,
+    console.warn,
+  ]
+  if (stdoutGuardDepth === 0) {
+    const write = (...args: unknown[]) => {
+      process.stderr.write(`${args.map(toSafeText).join(' ')}\n`)
+    }
+    console.log = write
+    console.info = write
+    console.warn = write
+  }
+  stdoutGuardDepth += 1
+  try {
+    return await operation()
+  } finally {
+    stdoutGuardDepth -= 1
+    if (stdoutGuardDepth === 0) {
+      console.log = originals[0]
+      console.info = originals[1]
+      console.warn = originals[2]
+    }
+  }
+}
 
 const normalizeArtists = (raw: any): Song['artists'] => {
   const artists = raw?.ar || raw?.artists || raw?.artist || []
@@ -102,8 +164,9 @@ const normalizeComment = (raw: any): MusicComment => ({
 })
 
 export class NeteaseApi {
-  private readonly lyricCache = new Map<number, Promise<LyricResult>>()
-  private readonly upgradedLyricCache = new Map<string, Promise<LyricResult>>()
+  private readonly lyricCache = new LruMap<number, Promise<LyricResult>>(200)
+  private readonly upgradedLyricCache = new LruMap<string, Promise<LyricResult>>(200)
+  private readonly sourceCache = new LruMap<string, SourceFailure>(100)
 
   constructor(private readonly getCookie: () => string) {}
 
@@ -133,10 +196,15 @@ export class NeteaseApi {
     await this.initialize()
     try {
       const cookie = this.getCookie()
-      return bodyOf<T>(await fn({ ...params, ...(cookie ? { cookie } : {}) }))
+      return await withStdoutGuard(async () =>
+        bodyOf<T>(await fn({ ...params, ...(cookie ? { cookie } : {}) })),
+      )
     } catch (error: any) {
-      const message = error?.body?.message || error?.body?.msg || error?.message || String(error)
-      throw new AppError('API_REQUEST_FAILED', `${name} 请求失败：${message}`, error?.body)
+      throw new AppError(
+        'API_REQUEST_FAILED',
+        `${name} 请求失败：${apiErrorMessage(error)}`,
+        error?.body,
+      )
     }
   }
 
@@ -278,18 +346,59 @@ export class NeteaseApi {
     return promise
   }
 
+  /** 按音质阶梯解析可播放音源；全部不可用时抛出带分类原因的 SOURCE_UNAVAILABLE */
   async resolveSource(id: number, config: AppConfig): Promise<SourceResult> {
-    const official = await this.call<any>('song_url_v1', { id, level: config.quality })
-    const data = official?.data?.[0]
-    const hasUrl = typeof data?.url === 'string' && data.url.length > 0
-    const isTrial = data?.freeTrialInfo != null
-    if (hasUrl && !isTrial) {
-      return {
-        url: data.url,
-        source: 'official',
-        sourceName: 'netease',
-        trial: false,
-        quality: data?.level || data?.type || config.quality,
+    const chain = qualityChain(config.quality, config.qualityFallback)
+    if (!chain.length) {
+      throw new SourceUnavailableError({
+        reason: 'no_url',
+        message: `无法识别的音质设置：${config.quality}`,
+      })
+    }
+    const cacheKey = [
+      id,
+      chain.join('>'),
+      config.unblock.enabled ? 1 : 0,
+      config.allowTrial ? 1 : 0,
+    ].join(':')
+    const cached = this.sourceCache.get(cacheKey)
+    if (cached) throw new SourceUnavailableError(cached)
+
+    const tried: { level: string; code?: number }[] = []
+    let fee: number | undefined
+    let trialUrl = ''
+    let trialLevel = ''
+    let requestError = ''
+
+    for (const level of chain) {
+      let data: any
+      try {
+        const result = await this.call<any>('song_url_v1', { id, level })
+        data = result?.data?.[0]
+      } catch (error) {
+        requestError = apiErrorMessage(error)
+        tried.push({ level })
+        continue
+      }
+      const code = Number(data?.code)
+      tried.push({ level, ...(Number.isFinite(code) ? { code } : {}) })
+      if (Number.isFinite(Number(data?.fee))) fee = Number(data.fee)
+      const url = typeof data?.url === 'string' ? data.url : ''
+      // 试听片段以 freeTrialInfo 为准，无试听时接口返回 null 或字符串 'null'
+      const trial = data?.freeTrialInfo != null && String(data.freeTrialInfo) !== 'null'
+      if (url && !trial) {
+        return {
+          url,
+          source: 'official',
+          sourceName: 'netease',
+          trial: false,
+          quality: data?.level || level,
+          requestedQuality: config.quality,
+        }
+      }
+      if (url && trial && !trialUrl) {
+        trialUrl = url
+        trialLevel = data?.level || level
       }
     }
 
@@ -300,8 +409,7 @@ export class NeteaseApi {
           id,
           ...(source ? { source } : {}),
         })
-        const matchedUrl =
-          typeof matched?.data === 'string' ? matched.data : matched?.data?.url || matched?.url
+        const matchedUrl = typeof matched?.data === 'string' ? matched.data : ''
         if (matchedUrl) {
           return {
             url: matched?.proxyUrl || matchedUrl,
@@ -309,6 +417,7 @@ export class NeteaseApi {
             sourceName: source || 'auto',
             trial: false,
             quality: 'matched',
+            requestedQuality: config.quality,
           }
         }
       } catch {
@@ -316,19 +425,25 @@ export class NeteaseApi {
       }
     }
 
-    if (hasUrl && isTrial && config.allowTrial) {
+    if (trialUrl && config.allowTrial) {
       return {
-        url: data.url,
+        url: trialUrl,
         source: 'trial',
         sourceName: 'netease',
         trial: true,
-        quality: data?.level || data?.type || config.quality,
+        quality: trialLevel,
+        requestedQuality: config.quality,
       }
     }
-    throw new AppError(
-      isTrial ? 'TRIAL_DISABLED' : 'NO_PLAYABLE_SOURCE',
-      isTrial ? '歌曲仅提供试听，当前未允许播放试听片段' : '没有找到可播放的音源',
-    )
+
+    const failure = describeSourceFailure({
+      fee,
+      tried,
+      requestError,
+      trialOnly: Boolean(trialUrl),
+    })
+    if (failure.reason !== 'request_failed') this.sourceCache.set(cacheKey, failure, 10 * 60 * 1000)
+    throw new SourceUnavailableError(failure)
   }
 
   async createQrLogin() {
@@ -888,20 +1003,28 @@ export class NeteaseApi {
     ): Promise<SigninTaskResult> => {
       try {
         const result = await this.call<any>(name, { ...params, timestamp: Date.now() })
-        const point = Number(result?.point ?? result?.data?.sign?.point)
+        const code = Number(result?.code)
+        const message = String(result?.msg || result?.message || '')
+        if (code !== 200) {
+          return {
+            task,
+            success: false,
+            repeated: false,
+            message: message || `接口返回错误码 ${Number.isFinite(code) ? code : '未知'}`,
+          }
+        }
+        const point = Number(result?.point)
         return {
           task,
           success: true,
           repeated: false,
-          message: String(result?.msg || result?.message || '签到成功'),
+          message: message || '签到成功',
           point: Number.isFinite(point) ? point : undefined,
         }
       } catch (error) {
         const detail = error instanceof AppError ? (error.details as any) : undefined
         const code = Number(detail?.code)
-        const message = String(
-          detail?.msg || detail?.message || (error instanceof Error ? error.message : error),
-        )
+        const message = apiErrorMessage(error)
         if (code === -2 || /重复|已签到|已经签/.test(message)) {
           return { task, success: true, repeated: true, message: '今天已签到' }
         }

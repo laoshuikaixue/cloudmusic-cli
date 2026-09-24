@@ -127,3 +127,24 @@ describe('addShuffleIds / removeShuffleId', () => {
     expect(next.history).toEqual([4])
   })
 })
+
+describe('回退栈上限', () => {
+  it('长时间随机切歌后回退栈不会超过队列歌曲数', () => {
+    let state = newShuffleState(songs, 0)
+    let index = 0
+    for (let step = 0; step < 200; step++) {
+      const result = nextShuffleIndex(songs, index, state)
+      state = result.state
+      index = result.index
+      expect(state.history.length).toBeLessThanOrEqual(songs.length)
+    }
+  })
+
+  it('反复手动跳转同样收紧回退栈', () => {
+    let state = newShuffleState(songs, 0)
+    for (let step = 0; step < 60; step++) {
+      state = trackShuffleJump(songs, step % songs.length, ((step + 2) % songs.length) + 1, state)
+      expect(state.history.length).toBeLessThanOrEqual(songs.length)
+    }
+  })
+})

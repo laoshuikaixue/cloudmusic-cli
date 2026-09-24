@@ -19,6 +19,8 @@ CloudMusic CLI 是一个以终端为主要交互界面的网易云音乐播放�
 - 后台播放：关闭 TUI 后继续播放，并在多个终端、CLI 和 MCP 客户端之间共享状态
 - 自动听歌上报：默认启用 NCBL，也可在设置中切换 legacy 或关闭
 - 音源策略：优先使用网易云官方音源，并支持解灰回退和可选官方试听
+- 音质阶梯：支持标准、较高、极高、无损、Hi-Res、高清环绕声、沉浸环绕声、杜比全景声和超清母带；
+  目标音质不可用时按阶梯自动降级，取不到音源的歌曲可自动跳过并给出具体原因
 - AI 与自动化：普通 CLI、稳定 JSON/JSONL 输出和 stdio MCP Server
 - 系统集成：Windows SMTC 媒体卡片、时间线和系统媒体按键
 - ClassIsland 联动：通过 ClassLink 显示逐字/TTML 歌词、翻译、伴唱、对唱、歌曲信息与封面
@@ -147,6 +149,9 @@ ncm library record --week
 ncm mode shuffle
 ncm scrobble status
 ncm scrobble mode ncbl
+ncm source quality
+ncm source quality jymaster --fallback on
+ncm source auto-skip on
 ncm smtc status
 ncm classlink status
 ncm classlink connect
@@ -184,6 +189,12 @@ ncm quit
 歌单和每日推荐页面中，`Enter` 会从当前选中歌曲开始整队播放，`a` 从第一首播放全部。
 听歌上报默认开启，按真实播放时长累计；歌曲大于 30 秒且播放达到一半或 240 秒中的较小值时，
 每个播放周期最多上报一次。可在设置页选择 NCBL（PLV/PLD）或 legacy 方式。
+
+音质按官方接口的档位请求，超出账号权限的档位不会返回可播放地址；开启“音质降级”后，
+播放器会沿超清母带 → Hi-Res → 无损 → 极高 → 较高 → 标准逐级回退，播放页会显示实际音质以及
+降级来源。高清环绕声、沉浸环绕声和杜比全景声依赖设备支持，不作为降级目标。
+开启“失败跳过”后，自动切歌遇到没有音源的歌曲会继续向后尝试，连续 5 首仍失败时停止并给出原因
+（如需要 VIP、需要购买、仅提供试听、暂无版权）；手动切歌始终如实返回失败原因。
 
 ## AI 与 JSON
 

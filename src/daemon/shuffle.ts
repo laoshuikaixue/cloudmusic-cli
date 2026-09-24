@@ -17,6 +17,14 @@ const uniqueIds = (songs: Array<{ id: number }>): number[] => [
   ...new Set(songs.map((song) => song.id)),
 ]
 
+/** 回退栈不需要超过队列长度，超出部分永远不会再被用到 */
+const pushHistory = (history: number[], id: number | undefined, songs: Array<{ id: number }>) => {
+  if (id === undefined) return history
+  const limit = Math.max(1, uniqueIds(songs).length)
+  const next = [...history, id]
+  return next.length > limit ? next.slice(next.length - limit) : next
+}
+
 /** 初始化一轮:池中包含队列全部歌曲(去重),排除当前正在播放的歌曲 */
 export function newShuffleState(songs: Array<{ id: number }>, currentIndex = -1): ShuffleState {
   const currentId = songs[currentIndex]?.id
@@ -53,7 +61,7 @@ export function nextShuffleIndex(
   }
   const pick = candidates[Math.floor(Math.random() * candidates.length)]
   const nextPool = (freshRound ? candidates : pool).filter((id) => id !== pick)
-  const nextHistory = currentId !== undefined ? [...history, currentId] : history
+  const nextHistory = pushHistory(history, currentId, songs)
   return {
     index: songs.findIndex((song) => song.id === pick),
     state: { pool: nextPool, history: nextHistory },
@@ -93,7 +101,7 @@ export function trackShuffleJump(
   const currentId = songs[currentIndex]?.id
   const history =
     currentId !== undefined && currentId !== targetId
-      ? [...state.history, currentId]
+      ? pushHistory(state.history, currentId, songs)
       : state.history
   const pool = currentId === targetId ? state.pool : state.pool.filter((id) => id !== targetId)
   return { pool, history }
