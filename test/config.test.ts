@@ -140,3 +140,41 @@ describe('pickValidConfigPatch', () => {
     expect(pickValidConfigPatch(['quality'])).toEqual({})
   })
 })
+
+describe('播放音效配置', () => {
+  it('只校验补丁里出现的字段', () => {
+    expect(sanitizeConfigPatch({ player: { speed: 1.25 } })).toEqual({ player: { speed: 1.25 } })
+    expect(sanitizeConfigPatch({ player: { fadeMs: 250 } })).toEqual({ player: { fadeMs: 250 } })
+  })
+
+  it('倍速收敛到两位小数并拒绝越界', () => {
+    expect(sanitizeConfigPatch({ player: { speed: 1.005 } })).toEqual({ player: { speed: 1 } })
+    expect(() => sanitizeConfigPatch({ player: { speed: 0.25 } })).toThrow(/player.speed/)
+    expect(() => sanitizeConfigPatch({ player: { speed: 4 } })).toThrow(/player.speed/)
+    expect(() => sanitizeConfigPatch({ player: { speed: 0 } })).toThrow(/player.speed/)
+  })
+
+  it('响度归一只接受 off/track/album', () => {
+    expect(sanitizeConfigPatch({ player: { replayGain: 'album' } })).toEqual({
+      player: { replayGain: 'album' },
+    })
+    expect(() => sanitizeConfigPatch({ player: { replayGain: 'loudness' } })).toThrow(
+      /player.replayGain/,
+    )
+  })
+
+  it('前置增益与淡变时长有上下限', () => {
+    expect(sanitizeConfigPatch({ player: { replayGainPreamp: -4.56 } })).toEqual({
+      player: { replayGainPreamp: -4.6 },
+    })
+    expect(() => sanitizeConfigPatch({ player: { replayGainPreamp: 20 } })).toThrow(
+      /replayGainPreamp/,
+    )
+    expect(() => sanitizeConfigPatch({ player: { fadeMs: -1 } })).toThrow(/fadeMs/)
+    expect(() => sanitizeConfigPatch({ player: { fadeMs: 99_000 } })).toThrow(/fadeMs/)
+  })
+
+  it('拒绝 player 组里的未知字段', () => {
+    expect(() => sanitizeConfigPatch({ player: { tempo: 2 } })).toThrow(/tempo/)
+  })
+})

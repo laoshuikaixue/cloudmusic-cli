@@ -2,7 +2,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { ensureDaemon, requestDaemonResilient } from '../ipc/client.js'
-import { LYRIC_DISPLAY_MODES, MAX_LYRIC_OFFSET_MS, QUALITY_LEVELS } from '../core/config.js'
+import {
+  LYRIC_DISPLAY_MODES,
+  MAX_FADE_MS,
+  MAX_LYRIC_OFFSET_MS,
+  QUALITY_LEVELS,
+} from '../core/config.js'
 import { VERSION } from '../version.js'
 import type { AppConfig } from '../core/types.js'
 
@@ -351,6 +356,24 @@ const tools = [
     },
   },
   {
+    name: 'set_playback_speed',
+    description: '设置播放倍速（0.5 到 2），立即作用于当前播放。',
+    inputSchema: {
+      type: 'object',
+      properties: { speed: { type: 'number', description: '倍速，1 表示正常速度' } },
+      required: ['speed'],
+    },
+  },
+  {
+    name: 'set_sleep_timer',
+    description:
+      '睡眠定时：minutes 为倒计时分钟数（到点暂停播放），songEnd 为播完当前歌曲后停止；两者都不传则取消定时。',
+    inputSchema: {
+      type: 'object',
+      properties: { minutes: { type: 'number' }, songEnd: { type: 'boolean' } },
+    },
+  },
+  {
     name: 'configure_player',
     description:
       '配置音质、音质降级、取源失败自动切歌、解灰、试听、听歌上报开关和 NCBL/legacy 上报方式。',
@@ -364,6 +387,17 @@ const tools = [
         allowTrial: { type: 'boolean' },
         scrobbleEnabled: { type: 'boolean' },
         scrobbleMode: { type: 'string', enum: ['ncbl', 'legacy'] },
+        speed: { type: 'number', description: '播放倍速 0.5-2，立即生效' },
+        replayGain: {
+          type: 'string',
+          enum: ['off', 'track', 'album'],
+          description: '响度归一，下一首起生效',
+        },
+        replayGainPreamp: { type: 'number', description: 'ReplayGain 前置增益 dB，±12' },
+        fadeMs: {
+          type: 'number',
+          description: `淡入淡出毫秒，0 关闭，最大 ${MAX_FADE_MS}`,
+        },
         lyricDisplay: {
           type: 'string',
           enum: [...LYRIC_DISPLAY_MODES],
@@ -549,6 +583,13 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request('library.record.play', args)
     case 'set_playback_mode':
       return request('mode.set', args)
+    case 'set_playback_speed':
+      return request('speed.set', { value: args.speed })
+    case 'set_sleep_timer':
+      return request('sleep.set', {
+        ...(typeof args.minutes === 'number' ? { minutes: args.minutes } : {}),
+        ...(typeof args.songEnd === 'boolean' ? { songEnd: args.songEnd } : {}),
+      })
     case 'configure_player': {
       const current = (await request('config.get')) as AppConfig
       return request('config.set', {
@@ -558,6 +599,24 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
             ? { qualityFallback: args.qualityFallback }
             : {}),
           ...(typeof args.skipOnError === 'boolean' ? { skipOnError: args.skipOnError } : {}),
+          ...(typeof args.speed === 'number' ||
+          typeof args.replayGain === 'string' ||
+          typeof args.replayGainPreamp === 'number' ||
+          typeof args.fadeMs === 'number'
+            ? {
+                player: {
+                  ...current.player,
+                  ...(typeof args.speed === 'number' ? { speed: args.speed } : {}),
+                  ...(typeof args.replayGain === 'string'
+                    ? { replayGain: args.replayGain as AppConfig['player']['replayGain'] }
+                    : {}),
+                  ...(typeof args.replayGainPreamp === 'number'
+                    ? { replayGainPreamp: args.replayGainPreamp }
+                    : {}),
+                  ...(typeof args.fadeMs === 'number' ? { fadeMs: args.fadeMs } : {}),
+                },
+              }
+            : {}),
           ...(typeof args.allowTrial === 'boolean' ? { allowTrial: args.allowTrial } : {}),
           ...(typeof args.unblockEnabled === 'boolean'
             ? { unblock: { ...current.unblock, enabled: args.unblockEnabled } }

@@ -9,6 +9,7 @@ import {
 } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
 import { MAX_LYRIC_OFFSET_MS, QUALITY_LEVELS, type QualityLevel } from '../core/config.js'
+import { formatSleepRemaining } from '../daemon/sleep.js'
 import {
   LYRIC_MODE_LABELS,
   lyricMainText,
@@ -71,6 +72,7 @@ type PageMode =
   | 'classlink-token'
   | 'classlink-port'
   | 'lyrics-view'
+  | 'sleep-minutes'
   | 'account'
   | 'comments'
   | 'collections'
@@ -137,6 +139,26 @@ interface AccountStatus {
   profile?: { userId: number; nickname: string; vipType: number }
 }
 
+/** 设置页里按 ←/→ 轮换的离散步进 */
+const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+const FADE_STEPS = [0, 120, 250, 500, 1000]
+const REPLAY_GAIN_STEPS = ['off', 'track', 'album'] as const
+const REPLAY_GAIN_LABELS: Record<(typeof REPLAY_GAIN_STEPS)[number], string> = {
+  off: '关闭',
+  track: '按歌曲',
+  album: '按专辑',
+}
+
+const stepValue = <T extends string | number>(
+  steps: readonly T[],
+  current: T,
+  direction: number,
+): T => {
+  const index = steps.indexOf(current)
+  const base = index < 0 ? 0 : index
+  return steps[(base + direction + steps.length) % steps.length] as T
+}
+
 const emptyStatus: PlaybackStatus = {
   daemon: 'running',
   state: 'idle',
@@ -144,6 +166,7 @@ const emptyStatus: PlaybackStatus = {
   position: 0,
   duration: 0,
   volume: 80,
+  speed: 1,
   mode: 'sequence',
   source: null,
   trial: false,
@@ -1189,6 +1212,37 @@ export const NowPlaying = () => {
       (lyrics) => `歌词偏移 ${lyrics.offsetMs > 0 ? '+' : ''}${lyrics.offsetMs}ms`,
     )
 
+  const openSleepInput = () => {
+    setInputValue('')
+    setMode('sleep-minutes')
+    setMessage('输入睡眠定时的分钟数，输入 off 取消')
+  }
+
+  const submitSleepMinutes = async () => {
+    const raw = inputValue.trim()
+    setInputValue('')
+    setMode('settings')
+    try {
+      if (!raw || raw.toLowerCase() === 'off' || raw === '0') {
+        await callDaemon('sleep.set', {})
+        setMessage('已取消睡眠定时')
+        return
+      }
+      if (!/^\d+$/.test(raw)) {
+        setMessage('睡眠定时只能是分钟数或 off')
+        return
+      }
+      const result = await callDaemon<PlaybackStatus>('sleep.set', { minutes: Number(raw) })
+      setMessage(
+        result.sleep?.mode === 'timer'
+          ? `将在 ${formatSleepRemaining(result.sleep.remainingSeconds || 0)} 后暂停播放`
+          : '睡眠定时已设置',
+      )
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const openLyricsViewPage = () => {
     setLyricsViewIndex(0)
     setMode('lyrics-view')
@@ -1731,6 +1785,26 @@ export const NowPlaying = () => {
       return
     }
 
+    if (mode === 'sleep-minutes') {
+      if (key.escape) {
+        setInputValue('')
+        setMode('settings')
+        return
+      }
+      if (key.return) {
+        void submitSleepMinutes()
+        return
+      }
+      if (key.backspace || key.delete) {
+        setInputValue((value) => value.slice(0, -1))
+        return
+      }
+      if (input && !key.ctrl && !key.meta && /^[\doff]$/i.test(input)) {
+        setInputValue((value) => value + input)
+      }
+      return
+    }
+
     if (mode === 'lyrics-view') {
       if (key.escape || controlInput === 'o' || input === ',') return setMode('settings')
       if (key.upArrow) return setLyricsViewIndex((index) => Math.max(0, index - 1))
@@ -1889,10 +1963,6 @@ export const NowPlaying = () => {
   }
   const sourceLabel = status.source === 'unblock' ? `解灰 · ${status.sourceName || 'auto'}` : null
   const qualityLabel = status.quality || '未知音质'
-  const degradedQuality =
-    Boolean(status.quality) &&
-    Boolean(status.requestedQuality) &&
-    status.quality !== status.requestedQuality
   const stateIcon =
     status.state === 'playing'
       ? '▶'
@@ -1930,6 +2000,11 @@ export const NowPlaying = () => {
       (current + direction + QUALITY_LEVELS.length) % QUALITY_LEVELS.length
     ] as string
   }
+  const sleepLabel = !status.sleep
+    ? '未设置'
+    : status.sleep.mode === 'song-end'
+      ? '播完当前歌曲后停止'
+      : `剩余 ${formatSleepRemaining(status.sleep.remainingSeconds || 0)}`
   const accountLabel = account.loggedIn
     ? account.profile?.nickname || String(account.profile?.userId)
     : '未登录'
@@ -2035,6 +2110,44 @@ export const NowPlaying = () => {
             }),
         },
         {
+          label: '播放倍速',
+          value: settingsConfig.player.speed === 1 ? '正常速度' : `${settingsConfig.player.speed}x`,
+          cycle: true,
+          apply: (direction) =>
+            callDaemon('speed.set', {
+              value: stepValue(SPEED_STEPS, settingsConfig.player.speed, direction),
+            }),
+        },
+        {
+          label: '响度归一',
+          value: `${REPLAY_GAIN_LABELS[settingsConfig.player.replayGain]}（下一首起）`,
+          cycle: true,
+          apply: (direction) =>
+            callDaemon('config.set', {
+              patch: {
+                player: {
+                  replayGain: stepValue(
+                    REPLAY_GAIN_STEPS,
+                    settingsConfig.player.replayGain,
+                    direction,
+                  ),
+                },
+              },
+            }),
+        },
+        {
+          label: '淡入淡出',
+          value: settingsConfig.player.fadeMs ? `${settingsConfig.player.fadeMs}ms` : '关闭',
+          cycle: true,
+          apply: (direction) =>
+            callDaemon('config.set', {
+              patch: {
+                player: { fadeMs: stepValue(FADE_STEPS, settingsConfig.player.fadeMs, direction) },
+              },
+            }),
+        },
+        { label: '睡眠定时', value: sleepLabel, open: openSleepInput },
+        {
           label: '歌词显示',
           value: `${LYRIC_MODE_LABELS[settingsConfig.lyrics.display]} · ${
             settingsConfig.lyrics.karaoke ? '逐字' : '整行'
@@ -2131,6 +2244,12 @@ export const NowPlaying = () => {
             {'•'.repeat(Math.min(inputValue.length, Math.max(8, terminalWidth - 26)))}█
           </Text>
           <Text dimColor> 回车保存并启用，Esc 取消</Text>
+        </Text>
+      ) : null}
+      {mode === 'sleep-minutes' ? (
+        <Text>
+          睡眠定时 › <Text color="cyan">{shownInput}█</Text>
+          <Text dimColor> 输入分钟数或 off，Enter 确认，Esc 返回</Text>
         </Text>
       ) : null}
       {mode === 'classlink-port' ? (
@@ -2511,9 +2630,16 @@ export const NowPlaying = () => {
           <Text dimColor> {formatTime(status.duration)}</Text>
         </Box>
         <Text dimColor>
-          {modeLabel[status.mode]} · 音量 {status.volume}% · {qualityLabel}
-          {degradedQuality ? `（降自 ${status.requestedQuality}）` : ''}
+          {modeLabel[status.mode]} · 音量 {status.volume}%
+          {status.speed !== 1 ? ` · ${status.speed}x` : ''} · {qualityLabel}
           {sourceLabel ? ` · ${sourceLabel}` : ''}
+          {status.sleep
+            ? ` · 睡眠 ${
+                status.sleep.mode === 'song-end'
+                  ? '本曲后停'
+                  : formatSleepRemaining(status.sleep.remainingSeconds || 0)
+              }`
+            : ''}
         </Text>
         <Text dimColor>
           {status.queueContext?.name || '临时队列'} · {Math.max(0, status.queueIndex + 1)} /{' '}

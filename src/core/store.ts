@@ -8,6 +8,12 @@ const defaultConfig: AppConfig = {
   quality: 'exhigh',
   qualityFallback: true,
   skipOnError: true,
+  player: {
+    speed: 1,
+    replayGain: 'off',
+    replayGainPreamp: 0,
+    fadeMs: 0,
+  },
   volume: 80,
   mode: 'sequence',
   allowTrial: false,
@@ -53,6 +59,7 @@ const writeJson = async (file: string, value: unknown, sensitive = false) => {
 const mergeConfig = (base: AppConfig, patch: ConfigPatch): AppConfig => ({
   ...base,
   ...patch,
+  player: { ...base.player, ...patch.player },
   unblock: { ...base.unblock, ...patch.unblock },
   binaries: { ...base.binaries, ...patch.binaries },
   scrobble: { ...base.scrobble, ...patch.scrobble },

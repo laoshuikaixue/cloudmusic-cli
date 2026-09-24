@@ -13,6 +13,15 @@ import {
   trackShuffleJump,
   type ShuffleState,
 } from './shuffle.js'
+import {
+  MAX_SLEEP_MINUTES,
+  MIN_SLEEP_MINUTES,
+  sleepStatusOf,
+  sleepTimerExpired,
+  songEndSleep,
+  timerSleep,
+  type SleepTimer,
+} from './sleep.js'
 import { normalizeNeteaseCookie } from '../core/cookie.js'
 import { findActiveBackgroundLyrics, getLyricContext } from '../core/lyrics.js'
 import { AppStore } from '../core/store.js'
@@ -91,6 +100,7 @@ export class PlayerDaemon {
   private error?: string
   private sourceFailure?: SourceFailure
   private consecutiveFailures = 0
+  private sleepTimer?: SleepTimer
   private cycle = 0
   private scrobbledCycle = -1
   private scrobblePlayedSeconds = 0
@@ -156,6 +166,7 @@ export class PlayerDaemon {
     this.scrobbleTimer = setInterval(() => {
       void this.maybeScrobble().catch(() => undefined)
       this.maybePreloadNextLyrics()
+      this.maybeSleep()
     }, 1000)
     if (this.store.getCookie()) void this.refreshLikedSongs().catch(() => undefined)
     if (this.config.smtc.enabled) {
@@ -257,6 +268,19 @@ export class PlayerDaemon {
     await this.store.saveHistory(this.history)
   }
 
+  private pipelineOptions(offset = 0) {
+    return {
+      mpvPath: this.config.binaries.mpv || 'mpv',
+      ffmpegPath: this.config.binaries.ffmpeg || 'ffmpeg',
+      volume: this.config.volume,
+      speed: this.config.player.speed,
+      replayGain: this.config.player.replayGain,
+      replayGainPreamp: this.config.player.replayGainPreamp,
+      fadeMs: this.config.player.fadeMs,
+      offset,
+    }
+  }
+
   private async startSong(song: Song, offset = 0) {
     await this.finalizeHistory()
     this.state = 'loading'
@@ -312,12 +336,8 @@ export class PlayerDaemon {
         this.syncClassLink()
       })
       .catch(() => undefined)
-    await this.pipeline.start(source.url, {
-      mpvPath: this.config.binaries.mpv || 'mpv',
-      ffmpegPath: this.config.binaries.ffmpeg || 'ffmpeg',
-      volume: this.config.volume,
-      offset,
-    })
+    await this.pipeline.fadeOut()
+    await this.pipeline.start(source.url, this.pipelineOptions(offset))
     this.state = 'playing'
     await this.recordHistory(song)
     void this.smtc.sync(this.status())
@@ -377,6 +397,11 @@ export class PlayerDaemon {
 
   private async onEnded() {
     if (this.state === 'stopped' || this.state === 'idle') return
+    if (this.sleepTimer?.mode === 'song-end') {
+      this.sleepTimer = undefined
+      await this.stop().catch(() => undefined)
+      return
+    }
     await this.advanceAutomatically().catch((error) => {
       this.state = 'error'
       this.error = error instanceof Error ? error.message : String(error)
@@ -451,12 +476,7 @@ export class PlayerDaemon {
     const wasPaused = this.state === 'paused'
     if (sourceExpired) {
       this.state = 'loading'
-      await this.pipeline.start(this.currentUrl, {
-        mpvPath: this.config.binaries.mpv || 'mpv',
-        ffmpegPath: this.config.binaries.ffmpeg || 'ffmpeg',
-        volume: this.config.volume,
-        offset: position,
-      })
+      await this.pipeline.start(this.currentUrl, { ...this.pipelineOptions(position), fadeMs: 0 })
       this.state = 'playing'
       if (wasPaused) await this.pause()
     } else {
@@ -472,6 +492,42 @@ export class PlayerDaemon {
     this.config = await this.store.updateConfig({ volume })
     await this.pipeline.setVolume(volume).catch(() => undefined)
     return this.status()
+  }
+
+  async setSpeed(value: number) {
+    this.config = await this.store.updateConfig({ player: { speed: value } })
+    await this.pipeline.setSpeed(this.config.player.speed).catch(() => undefined)
+    void this.smtc.sync(this.status()).catch(() => undefined)
+    return this.status()
+  }
+
+  /** 睡眠定时：songEnd 播完当前曲停止；minutes 倒计时到点暂停；两者都不传则取消 */
+  async setSleep(options: { minutes?: number; songEnd?: boolean }) {
+    if (options.songEnd) {
+      this.sleepTimer = songEndSleep()
+      return this.status()
+    }
+    if (options.minutes === undefined) {
+      this.sleepTimer = undefined
+      return this.status()
+    }
+    if (options.minutes < MIN_SLEEP_MINUTES || options.minutes > MAX_SLEEP_MINUTES) {
+      throw new AppError(
+        'INVALID_ARGUMENT',
+        `睡眠定时必须在 ${MIN_SLEEP_MINUTES} 到 ${MAX_SLEEP_MINUTES} 分钟之间`,
+      )
+    }
+    const timer = timerSleep(options.minutes, Date.now())
+    if (!timer) throw new AppError('INVALID_ARGUMENT', '睡眠定时的分钟数必须大于 0')
+    this.sleepTimer = timer
+    return this.status()
+  }
+
+  /** 到点只暂停播放，daemon 与队列保持在线 */
+  private maybeSleep() {
+    if (!sleepTimerExpired(this.sleepTimer, Date.now())) return
+    this.sleepTimer = undefined
+    void this.pause().catch(() => undefined)
   }
 
   private async appendFmSongs() {
@@ -702,6 +758,8 @@ export class PlayerDaemon {
       position,
       duration: (this.song?.duration || 0) / 1000,
       volume: this.config.volume,
+      speed: this.config.player.speed,
+      sleep: sleepStatusOf(this.sleepTimer, Date.now()),
       mode: this.config.mode,
       source: this.source?.source || null,
       sourceName: this.source?.sourceName,
@@ -799,6 +857,8 @@ export class PlayerDaemon {
       'seek',
       'seek.chorus',
       'volume',
+      'speed.set',
+      'sleep.set',
       'mode.set',
       'queue.play',
       'queue.replace',
@@ -888,6 +948,15 @@ export class PlayerDaemon {
         return this.seekChorus()
       case 'volume':
         return this.volume(numberParam(params.value, 'value'))
+      case 'speed.set':
+        return this.setSpeed(numberParam(params.value, 'value'))
+      case 'sleep.set':
+        return this.setSleep({
+          ...(params.minutes === undefined
+            ? {}
+            : { minutes: numberParam(params.minutes, 'minutes') }),
+          ...(params.songEnd === undefined ? {} : { songEnd: Boolean(params.songEnd) }),
+        })
       case 'mode.set':
         return this.setMode(stringParam(params.mode, 'mode') as AppConfig['mode'])
       case 'spectrum':
@@ -1327,6 +1396,11 @@ export class PlayerDaemon {
         if (mode !== undefined) await this.setMode(mode)
         if (Object.keys(rest).length) this.config = await this.store.updateConfig(rest)
         else if (mode !== undefined) this.config = this.store.getConfig()
+        // 倍速与音量对当前播放立即生效，ReplayGain 与淡变在下一次起播时生效
+        if (rest.volume !== undefined)
+          await this.pipeline.setVolume(this.config.volume).catch(() => undefined)
+        if (rest.player?.speed !== undefined)
+          await this.pipeline.setSpeed(this.config.player.speed).catch(() => undefined)
         this.classLink.configure(this.config.classLink, this.store.getClassLinkToken())
         this.syncClassLink()
         return this.config

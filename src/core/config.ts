@@ -212,6 +212,43 @@ const checkSmtc = (input: Partial<AppConfig['smtc']>) => {
   }
 }
 
+export const MIN_PLAYBACK_SPEED = 0.5
+export const MAX_PLAYBACK_SPEED = 2
+export const MAX_REPLAY_GAIN_PREAMP_DB = 12
+export const MAX_FADE_MS = 3000
+const REPLAY_GAIN_MODES = ['off', 'track', 'album'] as const
+
+const checkPlayer = (input: Partial<AppConfig['player']>) => {
+  knownKeys(input, ['speed', 'replayGain', 'replayGainPreamp', 'fadeMs'], 'player')
+  const speed = input.speed === undefined ? undefined : finiteNumberOf(input.speed, 'player.speed')
+  if (
+    speed !== undefined &&
+    (speed < MIN_PLAYBACK_SPEED || speed > MAX_PLAYBACK_SPEED || speed === 0)
+  ) {
+    throw invalid(`player.speed 必须在 ${MIN_PLAYBACK_SPEED} 到 ${MAX_PLAYBACK_SPEED} 之间`)
+  }
+  const preamp =
+    input.replayGainPreamp === undefined
+      ? undefined
+      : finiteNumberOf(input.replayGainPreamp, 'player.replayGainPreamp')
+  if (preamp !== undefined && Math.abs(preamp) > MAX_REPLAY_GAIN_PREAMP_DB) {
+    throw invalid(`player.replayGainPreamp 必须在 ±${MAX_REPLAY_GAIN_PREAMP_DB} dB 之间`)
+  }
+  const fadeMs =
+    input.fadeMs === undefined ? undefined : finiteNumberOf(input.fadeMs, 'player.fadeMs')
+  if (fadeMs !== undefined && (fadeMs < 0 || fadeMs > MAX_FADE_MS)) {
+    throw invalid(`player.fadeMs 必须在 0 到 ${MAX_FADE_MS} 之间`)
+  }
+  return {
+    ...(speed === undefined ? {} : { speed: Math.round(speed * 100) / 100 }),
+    ...(input.replayGain === undefined
+      ? {}
+      : { replayGain: enumOf(input.replayGain, 'player.replayGain', REPLAY_GAIN_MODES) }),
+    ...(preamp === undefined ? {} : { replayGainPreamp: Math.round(preamp * 10) / 10 }),
+    ...(fadeMs === undefined ? {} : { fadeMs: Math.round(fadeMs) }),
+  }
+}
+
 const checkClassLink = (input: Partial<AppConfig['classLink']>) => {
   knownKeys(input, ['enabled', 'port'], 'classLink')
   const port = input.port === undefined ? undefined : finiteNumberOf(input.port, 'classLink.port')
@@ -240,6 +277,7 @@ export const sanitizeConfigPatch = (patch: unknown): ConfigPatch => {
       'quality',
       'qualityFallback',
       'skipOnError',
+      'player',
       'volume',
       'mode',
       'allowTrial',
@@ -263,6 +301,9 @@ export const sanitizeConfigPatch = (patch: unknown): ConfigPatch => {
     ...(input.skipOnError === undefined
       ? {}
       : { skipOnError: booleanOf(input.skipOnError, 'skipOnError') }),
+    ...(input.player === undefined
+      ? {}
+      : { player: subsetOf(input.player, 'player', checkPlayer) }),
     ...(input.volume === undefined
       ? {}
       : {

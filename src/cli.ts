@@ -7,7 +7,13 @@ import {
   subscribeDaemon,
 } from './ipc/client.js'
 import { AppError, toAppError } from './core/errors.js'
-import { QUALITY_LEVELS, isQualityLevel } from './core/config.js'
+import {
+  MAX_PLAYBACK_SPEED,
+  MIN_PLAYBACK_SPEED,
+  QUALITY_LEVELS,
+  isQualityLevel,
+} from './core/config.js'
+import { formatSleepRemaining } from './daemon/sleep.js'
 import { VERSION } from './version.js'
 import type {
   AppConfig,
@@ -234,6 +240,67 @@ program
   .command('volume <value>')
   .description('设置音量 0-100')
   .action(async (value) => output(await withDaemon('volume', { value: Number(value) })))
+
+program
+  .command('speed [value]')
+  .description(`查看或设置播放倍速（${MIN_PLAYBACK_SPEED}-${MAX_PLAYBACK_SPEED}），off 恢复 1.0`)
+  .action(async (value) => {
+    if (value === undefined) {
+      const config = await withDaemon<AppConfig>('config.get')
+      return output({ speed: config.player.speed }, () =>
+        console.log(`当前倍速：${config.player.speed}x`),
+      )
+    }
+    if (!['off'].includes(value) && !Number.isFinite(Number(value))) {
+      throw new AppError('INVALID_ARGUMENT', '倍速必须是数字或 off')
+    }
+    output(await withDaemon('speed.set', { value: value === 'off' ? 1 : Number(value) }))
+  })
+
+program
+  .command('sleep [value]')
+  .description('睡眠定时：分钟数开始倒计时，off 取消，--song-end 播完当前曲停止')
+  .option('--song-end', '播完当前歌曲后停止播放')
+  .action(async (value, options) => {
+    if (options.songEnd) return output(await withDaemon('sleep.set', { songEnd: true }))
+    if (value === undefined) {
+      const status = await withDaemon<PlaybackStatus>('status')
+      return output({ sleep: status.sleep ?? null }, () => {
+        if (!status.sleep) return console.log('未设置睡眠定时')
+        if (status.sleep.mode === 'song-end') return console.log('将在当前歌曲结束后停止')
+        console.log(`剩余 ${formatSleepRemaining(status.sleep.remainingSeconds || 0)} 后暂停播放`)
+      })
+    }
+    if (value === 'off') return output(await withDaemon('sleep.set', {}))
+    const minutes = Number(value)
+    if (!Number.isFinite(minutes)) {
+      throw new AppError('INVALID_ARGUMENT', '睡眠定时需要分钟数、off 或 --song-end')
+    }
+    output(await withDaemon('sleep.set', { minutes }))
+  })
+
+const player = program.command('player').description('播放音效：倍速、响度归一与淡入淡出')
+player
+  .command('status')
+  .action(async () => output((await withDaemon<AppConfig>('config.get')).player))
+player
+  .command('replay-gain <mode>')
+  .description('响度归一：off / track / album，下一首起生效')
+  .action(async (mode) =>
+    output(await withDaemon('config.set', { patch: { player: { replayGain: mode } } })),
+  )
+player
+  .command('preamp <db>')
+  .description('ReplayGain 前置增益（-12 到 12 dB），下一首起生效')
+  .action(async (db) =>
+    output(await withDaemon('config.set', { patch: { player: { replayGainPreamp: Number(db) } } })),
+  )
+player
+  .command('fade <ms>')
+  .description('淡入淡出时长（0 关闭，最大 3000 毫秒）')
+  .action(async (ms) =>
+    output(await withDaemon('config.set', { patch: { player: { fadeMs: Number(ms) } } })),
+  )
 
 const queue = program.command('queue').description('管理播放队列')
 queue.command('list').action(async () => {

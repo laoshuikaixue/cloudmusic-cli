@@ -17,6 +17,8 @@ export type QueueContextType =
   | 'new'
   | 'similar'
 export type ScrobbleMode = 'ncbl' | 'legacy'
+export type ReplayGainMode = 'off' | 'track' | 'album'
+export type SleepTimerMode = 'timer' | 'song-end'
 export type NewSongArea = 0 | 7 | 96 | 8 | 16
 
 export interface Artist {
@@ -230,6 +232,8 @@ export interface PlaybackStatus {
   position: number
   duration: number
   volume: number
+  speed: number
+  sleep?: SleepStatus
   mode: PlaybackMode
   source: PlaybackSource
   sourceName?: string
@@ -267,6 +271,13 @@ export interface PlaybackStatus {
   error?: string
 }
 
+export interface SleepStatus {
+  mode: SleepTimerMode
+  /** 定时器到点的毫秒时间戳；song-end 模式没有到点时间 */
+  endsAt?: number
+  remainingSeconds?: number
+}
+
 export interface ClassLinkStatus {
   enabled: boolean
   configured: boolean
@@ -282,6 +293,15 @@ export interface AppConfig {
   qualityFallback: boolean
   /** 单曲取不到音源时是否自动切到下一首 */
   skipOnError: boolean
+  player: {
+    /** 播放倍速，作用于 mpv 输出 */
+    speed: number
+    replayGain: ReplayGainMode
+    /** ReplayGain 前置增益（dB） */
+    replayGainPreamp: number
+    /** 起播/恢复淡入与暂停/切歌淡出的时长，0 表示关闭 */
+    fadeMs: number
+  }
   volume: number
   mode: PlaybackMode
   allowTrial: boolean
@@ -322,6 +342,7 @@ export interface ConfigPatch {
   quality?: string
   qualityFallback?: boolean
   skipOnError?: boolean
+  player?: Partial<AppConfig['player']>
   volume?: number
   mode?: PlaybackMode
   allowTrial?: boolean
