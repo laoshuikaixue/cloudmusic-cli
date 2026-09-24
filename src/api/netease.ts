@@ -18,7 +18,9 @@ import type {
   PlaylistSummary,
   QueueContext,
   RecentPlayEntry,
+  RecentResourceEntry,
   ScrobbleMode,
+  SigninOverview,
   SigninResult,
   SigninTaskResult,
   Song,
@@ -986,25 +988,74 @@ export class NeteaseApi {
   async recentSongs(limit = 50): Promise<RecentPlayEntry[]> {
     const result = await this.call<any>('record_recent_song', { limit, timestamp: Date.now() })
     return (result?.data?.list || [])
-      .filter((item: any) => Number.isFinite(Number(item?.data?.id)))
-      .map((item: any) => ({
-        song: normalizeSong(item.data),
-        playTime: Number(item?.playTime || 0),
-        os: item?.multiTerminalInfo?.os ? String(item.multiTerminalInfo.os) : undefined,
-      }))
+      .map((item: any): RecentPlayEntry | undefined => {
+        const id = Number(item?.data?.id)
+        if (!item?.data || !Number.isInteger(id) || id <= 0) return undefined
+        return {
+          song: normalizeSong(item.data),
+          playTime: Number(item?.playTime || 0),
+          ...(item?.multiTerminalInfo?.os ? { os: String(item.multiTerminalInfo.os) } : {}),
+        }
+      })
+      .filter((entry: RecentPlayEntry | undefined): entry is RecentPlayEntry => Boolean(entry))
   }
 
-  /** 每日签到（积分 + 云贝），重复签到视为已完成 */
+  /** 最近播放的歌单 / 专辑 / 播客：接口与歌曲共用同一层包装 */
+  private async recentResources(
+    name: 'record_recent_playlist' | 'record_recent_album' | 'record_recent_dj',
+    limit: number,
+  ): Promise<RecentResourceEntry[]> {
+    const result = await this.call<any>(name, { limit, timestamp: Date.now() })
+    return (result?.data?.list || [])
+      .map((item: any): RecentResourceEntry | undefined => {
+        const detail = item?.data
+        const id = Number(detail?.id)
+        // Number(null) 也是 0，这里要求正的整数 ID 才算有效条目
+        if (!detail || !Number.isInteger(id) || id <= 0) return undefined
+        const count = Number(detail?.size ?? detail?.programCount)
+        const cover = detail?.coverImgUrl || detail?.picUrl
+        return {
+          id,
+          name: String(detail.name || '未命名'),
+          ...(cover ? { cover: String(cover) } : {}),
+          playTime: Number(item?.playTime || 0),
+          ...(Number.isFinite(count) && count > 0 ? { count } : {}),
+        }
+      })
+      .filter((entry: RecentResourceEntry | undefined): entry is RecentResourceEntry =>
+        Boolean(entry),
+      )
+  }
+
+  recentPlaylists(limit = 50) {
+    return this.recentResources('record_recent_playlist', limit)
+  }
+
+  recentAlbums(limit = 50) {
+    return this.recentResources('record_recent_album', limit)
+  }
+
+  recentRadios(limit = 50) {
+    return this.recentResources('record_recent_dj', limit)
+  }
+
+  /**
+   * 每日签到（积分）+ 云贝签到。
+   * daily_signin 真正成功时只返回 { code, point }，接口被服务端关闭时返回 { code:200, msg:'功能暂不支持' }；
+   * yunbei_sign 的结果在 data.sign / data.yunbeiNum。两者都按这些字段判定，不再无条件报成功。
+   */
   async signin(): Promise<SigninResult> {
-    const attempt = async (
-      task: string,
-      name: string,
-      params: Record<string, unknown> = {},
-    ): Promise<SigninTaskResult> => {
+    const rejectMessage = (error: unknown) => {
+      const detail = error instanceof AppError ? (error.details as any) : undefined
+      return { code: Number(detail?.code), message: apiErrorMessage(error) }
+    }
+    const daily = await (async (): Promise<SigninTaskResult> => {
+      const task = '每日签到'
       try {
-        const result = await this.call<any>(name, { ...params, timestamp: Date.now() })
+        const result = await this.call<any>('daily_signin', { type: 0, timestamp: Date.now() })
         const code = Number(result?.code)
-        const message = String(result?.msg || result?.message || '')
+        const message = String(result?.msg || result?.message || '').trim()
+        const point = Number(result?.point)
         if (code !== 200) {
           return {
             task,
@@ -1013,27 +1064,101 @@ export class NeteaseApi {
             message: message || `接口返回错误码 ${Number.isFinite(code) ? code : '未知'}`,
           }
         }
-        const point = Number(result?.point)
+        // 带 msg 的 200 说明这次签到并未真正完成（如「功能暂不支持」）
+        if (message) return { task, success: false, repeated: false, message }
         return {
           task,
           success: true,
           repeated: false,
-          message: message || '签到成功',
+          message: '签到成功',
           point: Number.isFinite(point) ? point : undefined,
         }
       } catch (error) {
-        const detail = error instanceof AppError ? (error.details as any) : undefined
-        const code = Number(detail?.code)
-        const message = apiErrorMessage(error)
+        const { code, message } = rejectMessage(error)
         if (code === -2 || /重复|已签到|已经签/.test(message)) {
           return { task, success: true, repeated: true, message: '今天已签到' }
         }
         return { task, success: false, repeated: false, message }
       }
-    }
+    })()
+    const yunbei = await (async (): Promise<SigninTaskResult> => {
+      const task = '云贝签到'
+      try {
+        const result = await this.call<any>('yunbei_sign', { timestamp: Date.now() })
+        const code = Number(result?.code)
+        const message = String(result?.message || result?.msg || '').trim()
+        if (code !== 200) {
+          return {
+            task,
+            success: false,
+            repeated: false,
+            message: message || `接口返回错误码 ${Number.isFinite(code) ? code : '未知'}`,
+          }
+        }
+        const signed = result?.data?.sign
+        if (signed === true) {
+          const yunbeiNum = Number(result?.data?.yunbeiNum)
+          return {
+            task,
+            success: true,
+            repeated: false,
+            message: '签到成功',
+            point: Number.isFinite(yunbeiNum) ? yunbeiNum : undefined,
+          }
+        }
+        return {
+          task,
+          success: false,
+          repeated: false,
+          message: message || '本次未获得云贝（可能今天已签到）',
+        }
+      } catch (error) {
+        const { code, message } = rejectMessage(error)
+        if (code === -2 || /重复|已签到|已经签/.test(message)) {
+          return { task, success: true, repeated: true, message: '今天已签到' }
+        }
+        return { task, success: false, repeated: false, message }
+      }
+    })()
+    return { daily, yunbei }
+  }
+
+  /** 签到概况：今日是否已签、近 30 天记录、累计/周期签到进度，以及会员成长值与云贝余额 */
+  async signinOverview(): Promise<SigninOverview> {
+    const [progress, growth, account] = await Promise.all([
+      this.call<any>('signin_progress', { timestamp: Date.now() }).catch(() => undefined),
+      this.call<any>('vip_growthpoint', { timestamp: Date.now() }).catch(() => undefined),
+      this.call<any>('yunbei_info', { timestamp: Date.now() }).catch(() => undefined),
+    ])
+    const data = progress?.data || {}
+    const userLevel = growth?.data?.userLevel
+    const balance = Number(account?.userPoint?.balance)
     return {
-      daily: await attempt('每日签到', 'daily_signin', { type: 0 }),
-      yunbei: await attempt('云贝签到', 'yunbei_sign'),
+      todaySignedIn: data.today?.todaySignedIn === true,
+      records: (data.records || [])
+        .map((item: any) => ({ day: String(item?.day || ''), signed: item?.signed === true }))
+        .filter((item: { day: string }) => item.day),
+      progress: (data.stats || []).map((item: any) => ({
+        id: Number(item?.id || 0),
+        description: String(item?.description || ''),
+        currentProgress: Number(item?.currentProgress || 0),
+        maxProgressReached: Number(item?.maxProgressReached || 0),
+        ...(item?.repeatType ? { repeatType: String(item.repeatType) } : {}),
+        ...(item?.calcType ? { calcType: String(item.calcType) } : {}),
+      })),
+      ...(userLevel
+        ? {
+            growth: {
+              level: Number(userLevel.level || 0),
+              ...(userLevel.levelName ? { levelName: String(userLevel.levelName) } : {}),
+              growthPoint: Number(userLevel.growthPoint || 0),
+              maxLevel: userLevel.maxLevel === true,
+            },
+          }
+        : {}),
+      ...(Number.isFinite(balance)
+        ? { yunbei: { level: Number(account?.level || 0), balance } }
+        : {}),
     }
   }
 

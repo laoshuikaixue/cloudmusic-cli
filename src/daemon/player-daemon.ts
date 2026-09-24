@@ -1296,6 +1296,18 @@ export class PlayerDaemon {
         return this.api.recentSongs(
           params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
         )
+      case 'library.recent.playlists':
+        return this.api.recentPlaylists(
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+        )
+      case 'library.recent.albums':
+        return this.api.recentAlbums(
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+        )
+      case 'library.recent.radios':
+        return this.api.recentRadios(
+          params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
+        )
       case 'library.recent.play':
         return this.playRecentSongs(
           params.limit === undefined ? 50 : numberParam(params.limit, 'limit'),
@@ -1320,6 +1332,8 @@ export class PlayerDaemon {
         return this.api.todayListenSongs()
       case 'signin':
         return this.api.signin()
+      case 'signin.overview':
+        return this.api.signinOverview()
       case 'like': {
         const id = numberParam(params.id, 'id')
         const liked = params.liked !== false

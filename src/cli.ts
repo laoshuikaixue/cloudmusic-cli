@@ -28,6 +28,8 @@ import type {
   PlaybackStatus,
   PlaylistSummary,
   RecentPlayEntry,
+  RecentResourceEntry,
+  SigninOverview,
   SigninResult,
   Song,
   SpectrumFrame,
@@ -472,7 +474,29 @@ program
 program
   .command('signin')
   .description('每日签到（积分 + 云贝）')
-  .action(async () => {
+  .option('--overview', '查看今日签到状态、连签进度、会员成长值与云贝余额')
+  .action(async (options) => {
+    if (options.overview) {
+      const overview = await withDaemon<SigninOverview>('signin.overview')
+      return output(overview, () => {
+        console.log(
+          `今日签到：${overview.todaySignedIn ? '已签到' : '未签到'} · 近 30 天记录 ${overview.records.filter((item) => item.signed).length} 天`,
+        )
+        for (const item of overview.progress) {
+          console.log(
+            `  ${item.description}：${item.currentProgress}（最高 ${item.maxProgressReached}）`,
+          )
+        }
+        if (overview.growth) {
+          console.log(
+            `会员成长值：Lv.${overview.growth.level}${overview.growth.levelName ? ` ${overview.growth.levelName}` : ''} · ${overview.growth.growthPoint}${overview.growth.maxLevel ? ' · 已满级' : ''}`,
+          )
+        }
+        if (overview.yunbei) {
+          console.log(`云贝：${overview.yunbei.balance} · 云贝等级 ${overview.yunbei.level}`)
+        }
+      })
+    }
     const result = await withDaemon<SigninResult>('signin')
     output(result, () => {
       for (const item of [result.daily, result.yunbei]) {
@@ -792,10 +816,36 @@ library
 library
   .command('recent')
   .description('服务端最近播放（跨设备）')
+  .option('--type <type>', 'song / playlist / album / radio', 'song')
   .option('--play', '播放云端最近播放列表')
   .option('--limit <limit>', '返回数量', '50')
   .option('--index <index>', '从指定索引开始播放', '0')
   .action(async (options) => {
+    const type = String(options.type || 'song')
+    if (!['song', 'playlist', 'album', 'radio'].includes(type)) {
+      throw new AppError('INVALID_ARGUMENT', '--type 只能是 song / playlist / album / radio')
+    }
+    if (options.play && type !== 'song') {
+      throw new AppError('INVALID_ARGUMENT', `--play 仅支持歌曲，${type} 请用对应的库命令播放`)
+    }
+    if (type !== 'song') {
+      const method =
+        type === 'playlist'
+          ? 'library.recent.playlists'
+          : type === 'album'
+            ? 'library.recent.albums'
+            : 'library.recent.radios'
+      const entries = await withDaemon<RecentResourceEntry[]>(method, {
+        limit: Number(options.limit),
+      })
+      return output(entries, () =>
+        entries.forEach((entry, index) =>
+          console.log(
+            `${String(index + 1).padStart(2, ' ')}. ${entry.name}${entry.count !== undefined ? ` · ${entry.count}` : ''} · ${new Date(entry.playTime).toLocaleString()} [${entry.id}]`,
+          ),
+        ),
+      )
+    }
     if (options.play) {
       return output(
         await withDaemon('library.recent.play', {

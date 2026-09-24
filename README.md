@@ -12,7 +12,8 @@ CloudMusic CLI 是一个以终端为主要交互界面的网易云音乐播放�
 - 一体化全屏 TUI：播放信息、进度、同步歌词、真实频谱、队列、音乐库和设置集中在同一界面
 - 网易云账号：二维码登录、Cookie 登录、持久化会话、用户资料、喜欢歌曲和自建歌单管理
 - 内容发现：多类型搜索、每日推荐、歌单广场、精品歌单、官方榜单、新歌速递、私人 FM 和心动模式
-- 完整音乐库：账号歌单、收藏专辑、关注歌手、音乐云盘、最近播放和听歌排行
+- 完整音乐库：账号歌单、收藏专辑、关注歌手、音乐云盘、最近播放（歌曲/歌单/专辑/播客）和听歌排行
+- 签到概况：执行积分与云贝签到，并可查看今日是否已签、近 30 天签到记录、累计与周期签到进度、会员成长值和云贝余额
 - 本地听歌统计：按天记录本机实际收听秒数，离线可查今日/7 天/30 天/365 天的时长、活跃天数与 TOP 歌曲
 - 播放控制：播放/暂停、精确 Seek、音量、0.5-2.0 倍速、响度归一、淡入淡出、睡眠定时和可编辑播放队列
 - 歌词与可视化：LRC、网易云 YRC、QQ QRC、AMLL TTML 逐字歌词，支持翻译、罗马音、对唱/背景行以及基于真实 PCM 的 64 频带频谱
@@ -124,6 +125,7 @@ ncm stats --today
 ncm stats --local
 ncm stats --local --month
 ncm signin
+ncm signin --overview
 ncm status --json
 ncm lyrics 186016 --words
 ncm lyrics 186016 --no-upgrade
@@ -154,6 +156,9 @@ ncm library heart --play
 ncm library fm-trash
 ncm library history
 ncm library recent
+ncm library recent --type playlist
+ncm library recent --type album
+ncm library recent --type radio
 ncm library recent --play --limit 30
 ncm library cloud --play
 ncm library albums

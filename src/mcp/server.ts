@@ -460,10 +460,12 @@ const tools = [
   },
   {
     name: 'get_recent_songs',
-    description: '服务端最近播放记录（跨设备）；play 为 true 时替换队列并播放。',
+    description:
+      '服务端最近播放记录（跨设备），支持歌曲/歌单/专辑/播客；play 为 true 时仅歌曲可替换队列播放。',
     inputSchema: {
       type: 'object',
       properties: {
+        type: { type: 'string', enum: ['song', 'playlist', 'album', 'radio'], default: 'song' },
         limit: { type: 'number', default: 50 },
         play: { type: 'boolean', default: false },
       },
@@ -471,8 +473,12 @@ const tools = [
   },
   {
     name: 'daily_signin',
-    description: '执行网易云每日签到（积分 + 云贝），重复签到视为已完成。',
-    inputSchema: { type: 'object', properties: {} },
+    description:
+      '执行网易云每日签到（积分 + 云贝）；overview 为 true 时改为查询今日签到状态、签到进度、成长值与云贝余额。',
+    inputSchema: {
+      type: 'object',
+      properties: { overview: { type: 'boolean', default: false } },
+    },
   },
 ]
 
@@ -516,10 +522,22 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       return request(args.today === true ? 'stats.today' : 'stats.listen', args)
     case 'get_local_listen_stats':
       return request('stats.local', args)
-    case 'get_recent_songs':
-      return request(args.play === true ? 'library.recent.play' : 'library.recent', args)
+    case 'get_recent_songs': {
+      const type = typeof args.type === 'string' ? args.type : 'song'
+      if (type === 'song') {
+        return request(args.play === true ? 'library.recent.play' : 'library.recent', args)
+      }
+      return request(
+        type === 'playlist'
+          ? 'library.recent.playlists'
+          : type === 'album'
+            ? 'library.recent.albums'
+            : 'library.recent.radios',
+        args,
+      )
+    }
     case 'daily_signin':
-      return request('signin')
+      return request(args.overview === true ? 'signin.overview' : 'signin')
     case 'get_spectrum_snapshot':
       return request('spectrum')
     case 'get_user_playlists':

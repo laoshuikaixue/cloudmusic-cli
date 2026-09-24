@@ -118,6 +118,30 @@ export interface SigninResult {
   yunbei: SigninTaskResult
 }
 
+export interface SigninOverview {
+  todaySignedIn: boolean
+  records: { day: string; signed: boolean }[]
+  progress: {
+    id: number
+    description: string
+    currentProgress: number
+    maxProgressReached: number
+    repeatType?: string
+    calcType?: string
+  }[]
+  growth?: { level: number; levelName?: string; growthPoint: number; maxLevel: boolean }
+  yunbei?: { level: number; balance: number }
+}
+
+export interface RecentResourceEntry {
+  id: number
+  name: string
+  cover?: string
+  playTime: number
+  /** 歌单/专辑的曲目数或播客节目数 */
+  count?: number
+}
+
 export interface UserProfile {
   userId: number
   nickname: string
