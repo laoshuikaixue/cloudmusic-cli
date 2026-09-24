@@ -2,7 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { ensureDaemon, requestDaemonResilient } from '../ipc/client.js'
-import { QUALITY_LEVELS } from '../core/config.js'
+import { LYRIC_DISPLAY_MODES, MAX_LYRIC_OFFSET_MS, QUALITY_LEVELS } from '../core/config.js'
 import { VERSION } from '../version.js'
 import type { AppConfig } from '../core/types.js'
 
@@ -364,6 +364,17 @@ const tools = [
         allowTrial: { type: 'boolean' },
         scrobbleEnabled: { type: 'boolean' },
         scrobbleMode: { type: 'string', enum: ['ncbl', 'legacy'] },
+        lyricDisplay: {
+          type: 'string',
+          enum: [...LYRIC_DISPLAY_MODES],
+          description: '歌词显示：仅原文、原文+译文、仅译文、仅罗马音',
+        },
+        lyricKaraoke: { type: 'boolean' },
+        lyricBackground: { type: 'boolean' },
+        lyricOffsetMs: {
+          type: 'number',
+          description: `歌词时间轴偏移毫秒数，正值让歌词更早出现，范围 ±${MAX_LYRIC_OFFSET_MS}`,
+        },
       },
     },
   },
@@ -560,6 +571,26 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
                     : {}),
                   ...(typeof args.scrobbleMode === 'string' ? { mode: args.scrobbleMode } : {}),
                   configured: true,
+                },
+              }
+            : {}),
+          ...(typeof args.lyricDisplay === 'string' ||
+          typeof args.lyricKaraoke === 'boolean' ||
+          typeof args.lyricBackground === 'boolean' ||
+          typeof args.lyricOffsetMs === 'number'
+            ? {
+                lyrics: {
+                  ...current.lyrics,
+                  ...(typeof args.lyricDisplay === 'string'
+                    ? { display: args.lyricDisplay as AppConfig['lyrics']['display'] }
+                    : {}),
+                  ...(typeof args.lyricKaraoke === 'boolean' ? { karaoke: args.lyricKaraoke } : {}),
+                  ...(typeof args.lyricBackground === 'boolean'
+                    ? { background: args.lyricBackground }
+                    : {}),
+                  ...(typeof args.lyricOffsetMs === 'number'
+                    ? { offsetMs: args.lyricOffsetMs }
+                    : {}),
                 },
               }
             : {}),

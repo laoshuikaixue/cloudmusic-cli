@@ -152,8 +152,30 @@ const checkScrobble = (input: Partial<AppConfig['scrobble']>) => {
   }
 }
 
+export const LYRIC_DISPLAY_MODES = ['original', 'both', 'translation', 'romanization'] as const
+/** 偏移超过 ±60 秒基本是误操作 */
+export const MAX_LYRIC_OFFSET_MS = 60_000
+
 const checkLyrics = (input: Partial<AppConfig['lyrics']>) => {
-  knownKeys(input, ['upgrade', 'enableTtml', 'enableQrc', 'amllDbServer'], 'lyrics')
+  knownKeys(
+    input,
+    [
+      'upgrade',
+      'enableTtml',
+      'enableQrc',
+      'amllDbServer',
+      'display',
+      'karaoke',
+      'background',
+      'offsetMs',
+    ],
+    'lyrics',
+  )
+  const offsetMs =
+    input.offsetMs === undefined ? undefined : finiteNumberOf(input.offsetMs, 'lyrics.offsetMs')
+  if (offsetMs !== undefined && Math.abs(offsetMs) > MAX_LYRIC_OFFSET_MS) {
+    throw invalid(`lyrics.offsetMs 必须在 ±${MAX_LYRIC_OFFSET_MS} 毫秒之间`)
+  }
   return {
     ...(input.upgrade === undefined ? {} : { upgrade: booleanOf(input.upgrade, 'lyrics.upgrade') }),
     ...(input.enableTtml === undefined
@@ -162,6 +184,14 @@ const checkLyrics = (input: Partial<AppConfig['lyrics']>) => {
     ...(input.enableQrc === undefined
       ? {}
       : { enableQrc: booleanOf(input.enableQrc, 'lyrics.enableQrc') }),
+    ...(input.display === undefined
+      ? {}
+      : { display: enumOf(input.display, 'lyrics.display', LYRIC_DISPLAY_MODES) }),
+    ...(input.karaoke === undefined ? {} : { karaoke: booleanOf(input.karaoke, 'lyrics.karaoke') }),
+    ...(input.background === undefined
+      ? {}
+      : { background: booleanOf(input.background, 'lyrics.background') }),
+    ...(offsetMs === undefined ? {} : { offsetMs: Math.round(offsetMs) }),
     ...(input.amllDbServer === undefined
       ? {}
       : {

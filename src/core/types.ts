@@ -190,6 +190,19 @@ export interface LyricWord {
 export type LyricFormat = 'ttml' | 'qrc' | 'yrc' | 'lrc'
 export type LyricSource = 'netease' | 'amll' | 'qqmusic'
 
+/** 歌词显示模式：原文、原文+注释行、只显示译文、只显示罗马音 */
+export type LyricDisplayMode = 'original' | 'both' | 'translation' | 'romanization'
+
+export interface LyricView {
+  mode: LyricDisplayMode
+  /** 逐字高亮，关闭后按整行显示 */
+  karaoke: boolean
+  /** 是否显示背景人声行 */
+  background: boolean
+  /** 歌词时间轴偏移（毫秒），正值让歌词更早出现 */
+  offsetMs: number
+}
+
 export interface LyricResult {
   lines: LyricLine[]
   format: LyricFormat
@@ -248,6 +261,7 @@ export interface PlaybackStatus {
   lyricFormat?: LyricFormat
   lyricSource?: LyricSource
   lyricsUpgraded?: boolean
+  lyricView?: LyricView
   spectrumGeneration?: number
   sourceFailure?: SourceFailure
   error?: string
@@ -296,6 +310,10 @@ export interface AppConfig {
     enableTtml: boolean
     enableQrc: boolean
     amllDbServer: string
+    display: LyricDisplayMode
+    karaoke: boolean
+    background: boolean
+    offsetMs: number
   }
 }
 

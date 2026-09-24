@@ -8,7 +8,16 @@ import {
   subscribeDaemon,
 } from '../ipc/client.js'
 import { normalizeControlInput } from './controls.js'
-import { QUALITY_LEVELS, type QualityLevel } from '../core/config.js'
+import { MAX_LYRIC_OFFSET_MS, QUALITY_LEVELS, type QualityLevel } from '../core/config.js'
+import {
+  LYRIC_MODE_LABELS,
+  lyricMainText,
+  lyricPositionOf,
+  lyricSubText,
+  nextLyricDisplayMode,
+  stepLyricOffset,
+  useWordTiming,
+} from './lyric-display.js'
 import { getPlayerLayout, renderProgressBar } from './layout.js'
 import {
   getLyricLineTransition,
@@ -61,6 +70,7 @@ type PageMode =
   | 'classlink'
   | 'classlink-token'
   | 'classlink-port'
+  | 'lyrics-view'
   | 'account'
   | 'comments'
   | 'collections'
@@ -151,6 +161,8 @@ const formatTime = (seconds: number) => {
 
 const TimedLyricLine = ({
   line,
+  text,
+  wordTimed = true,
   position,
   waiting = false,
   waitingUntil = 0,
@@ -158,6 +170,8 @@ const TimedLyricLine = ({
   emphasis = 1,
 }: {
   line?: LyricLine
+  text?: string
+  wordTimed?: boolean
   position: number
   waiting?: boolean
   waitingUntil?: number
@@ -201,12 +215,13 @@ const TimedLyricLine = ({
   const prefix = line.isBackground ? '↳ ' : line.isDuet ? '↔ ' : ''
   const contextColor = '#64748b'
   const lineColor = line.isBackground ? '#e879f9' : '#22d3ee'
-  if (!line.words?.length) {
+  const displayText = text ?? line.text
+  if (!wordTimed || !line.words?.length) {
     return (
       <Box width="100%" justifyContent={line.isDuet ? 'flex-end' : 'flex-start'}>
         <Text bold color={mixHexColors(contextColor, lineColor, emphasis)}>
           {prefix}
-          {line.text}
+          {displayText}
         </Text>
       </Box>
     )
@@ -251,10 +266,12 @@ const TimedLyricLine = ({
 
 const ContextLyricLine = ({
   line,
+  text,
   emphasis = 0,
   emphasisColor = '#22d3ee',
 }: {
   line: LyricLine
+  text?: string
   emphasis?: number
   emphasisColor?: string
 }) => (
@@ -264,7 +281,7 @@ const ContextLyricLine = ({
       color={process.env.NO_COLOR ? undefined : mixHexColors('#64748b', emphasisColor, emphasis)}
     >
       {line.isDuet ? '↔ ' : ''}
-      {line.text}
+      {text ?? line.text}
     </Text>
   </Box>
 )
@@ -330,6 +347,7 @@ export const NowPlaying = () => {
   const [settingsIndex, setSettingsIndex] = useState(0)
   const [classLinkStatus, setClassLinkStatus] = useState<ClassLinkStatus | null>(null)
   const [classLinkIndex, setClassLinkIndex] = useState(0)
+  const [lyricsViewIndex, setLyricsViewIndex] = useState(0)
   const [accountIndex, setAccountIndex] = useState(0)
   const [qrText, setQrText] = useState('')
   const [comments, setComments] = useState<MusicComment[]>([])
@@ -1142,6 +1160,41 @@ export const NowPlaying = () => {
     }
   }
 
+  const updateLyricView = async (
+    change: (lyrics: AppConfig['lyrics']) => Partial<AppConfig['lyrics']>,
+    hint: (lyrics: AppConfig['lyrics']) => string,
+  ) => {
+    try {
+      const config = await callDaemon<AppConfig>('config.get')
+      const lyrics = { ...config.lyrics, ...change(config.lyrics) }
+      await callDaemon('config.set', { patch: { lyrics } })
+      setSettingsConfig((current) => (current ? { ...current, lyrics } : current))
+      setMessage(hint(lyrics))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const cycleLyricMode = () =>
+    void updateLyricView(
+      (lyrics) => ({ display: nextLyricDisplayMode(lyrics.display) }),
+      (lyrics) => `歌词显示：${LYRIC_MODE_LABELS[lyrics.display]}`,
+    )
+
+  const nudgeLyricOffset = (direction: number) =>
+    void updateLyricView(
+      (lyrics) => ({
+        offsetMs: stepLyricOffset(lyrics.offsetMs, direction * 250, MAX_LYRIC_OFFSET_MS),
+      }),
+      (lyrics) => `歌词偏移 ${lyrics.offsetMs > 0 ? '+' : ''}${lyrics.offsetMs}ms`,
+    )
+
+  const openLyricsViewPage = () => {
+    setLyricsViewIndex(0)
+    setMode('lyrics-view')
+    setMessage('歌词显示设置会立即保存并应用')
+  }
+
   const openClassLinkPage = async () => {
     setClassLinkIndex(0)
     setMode('classlink')
@@ -1678,6 +1731,32 @@ export const NowPlaying = () => {
       return
     }
 
+    if (mode === 'lyrics-view') {
+      if (key.escape || controlInput === 'o' || input === ',') return setMode('settings')
+      if (key.upArrow) return setLyricsViewIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) return setLyricsViewIndex((index) => Math.min(3, index + 1))
+      if (lyricsViewIndex === 3) {
+        if (key.leftArrow) nudgeLyricOffset(-1)
+        if (key.rightArrow) nudgeLyricOffset(1)
+        return
+      }
+      if (!key.rightArrow && !key.return && input !== ' ') return
+      if (lyricsViewIndex === 0) cycleLyricMode()
+      if (lyricsViewIndex === 1) {
+        void updateLyricView(
+          (lyrics) => ({ karaoke: !lyrics.karaoke }),
+          (lyrics) => `逐字高亮：${lyrics.karaoke ? '开启' : '关闭'}`,
+        )
+      }
+      if (lyricsViewIndex === 2) {
+        void updateLyricView(
+          (lyrics) => ({ background: !lyrics.background }),
+          (lyrics) => `背景人声：${lyrics.background ? '显示' : '隐藏'}`,
+        )
+      }
+      return
+    }
+
     if (mode === 'classlink') {
       if (key.escape) return setMode('settings')
       if (key.upArrow) return setClassLinkIndex((index) => Math.max(0, index - 1))
@@ -1741,6 +1820,9 @@ export const NowPlaying = () => {
     if (controlInput === 's' && status.song) {
       return void openPlaylistPicker(status.song, 'normal')
     }
+    if (controlInput === 't') return cycleLyricMode()
+    if (controlInput === '[') return nudgeLyricOffset(-1)
+    if (controlInput === ']') return nudgeLyricOffset(1)
     if (controlInput === 'r' && status.song) {
       return void showComments(
         'comments.song',
@@ -1782,11 +1864,16 @@ export const NowPlaying = () => {
     0,
     playerLayout.expanded ? 3 : 1,
   )
+  const lyricView = status.lyricView
+  const lyricMode = lyricView?.mode || 'both'
+  const lyricPosition = lyricPositionOf(lyricVisualPosition, lyricView?.offsetMs || 0)
+  const currentLyricText = lyricMainText(status.currentLyricLine, lyricMode)
+  const subLyricText = lyricSubText(status.currentLyricLine, lyricMode)
   const currentLineEntrance = status.currentLyricLine
-    ? getLyricLineTransition(lyricVisualPosition, status.currentLyricLine.time)
+    ? getLyricLineTransition(lyricPosition, status.currentLyricLine.time)
     : 0
   const nextLineEntrance = status.nextLyricLine
-    ? getLyricLineTransition(lyricVisualPosition, status.nextLyricLine.time)
+    ? getLyricLineTransition(lyricPosition, status.nextLyricLine.time)
     : 0
   const currentLineEmphasis = status.currentLyricLine
     ? Math.min(currentLineEntrance, status.nextLyricLine ? 1 - nextLineEntrance : 1)
@@ -1947,8 +2034,27 @@ export const NowPlaying = () => {
               },
             }),
         },
+        {
+          label: '歌词显示',
+          value: `${LYRIC_MODE_LABELS[settingsConfig.lyrics.display]} · ${
+            settingsConfig.lyrics.karaoke ? '逐字' : '整行'
+          } · 偏移 ${settingsConfig.lyrics.offsetMs}ms`,
+          open: openLyricsViewPage,
+        },
         { label: 'ClassLink', value: classLinkLabel, open: openClassLinkPage },
         { label: '网易云账号', value: accountLabel, open: openAccountPage },
+      ]
+    : []
+  const lyricsViewSettings = settingsConfig?.lyrics
+  const lyricsViewRows: Array<[string, string]> = lyricsViewSettings
+    ? [
+        ['显示模式', LYRIC_MODE_LABELS[lyricsViewSettings.display]],
+        ['逐字高亮', lyricsViewSettings.karaoke ? '开启' : '关闭'],
+        ['背景人声', lyricsViewSettings.background ? '显示' : '隐藏'],
+        [
+          '歌词偏移',
+          `${lyricsViewSettings.offsetMs > 0 ? '+' : ''}${lyricsViewSettings.offsetMs}ms（→ 提前 / ← 延后，每级 250ms）`,
+        ],
       ]
     : []
   const classLinkRows: Array<[string, string]> =
@@ -1981,7 +2087,8 @@ export const NowPlaying = () => {
           <Text>
             <Text color="cyan">/</Text> 搜索 · <Text color="cyan">L</Text> 音乐库 ·{' '}
             <Text color="cyan">TAB</Text> 队列 · <Text color="cyan">R</Text> 评论 ·{' '}
-            <Text color="cyan">S</Text> 加歌单 · <Text color="cyan">O</Text> 设置
+            <Text color="cyan">S</Text> 加歌单 · <Text color="cyan">T</Text> 歌词 ·{' '}
+            <Text color="cyan">O</Text> 设置
           </Text>
           <Text dimColor>
             SPACE 播放/暂停 · ← → 进度 · ↑ ↓ 音量 · P / N 切歌 · F 喜欢 · M 模式
@@ -2285,6 +2392,19 @@ export const NowPlaying = () => {
           </Text>
         </>
       ) : null}
+      {mode === 'lyrics-view' ? (
+        <>
+          <Text bold>歌词显示（↑/↓ 选择，←/→ 或 Enter 修改，o/,/Esc 返回设置）</Text>
+          {lyricsViewRows.map(([label, value], index) => (
+            <Text key={label} color={index === lyricsViewIndex ? 'cyan' : undefined}>
+              {index === lyricsViewIndex ? '▶ ' : '  '}
+              {label.padEnd(12, ' ')} {value}
+            </Text>
+          ))}
+          <Text dimColor>偏移只改变歌词行的选取，播放进度与 Seek 不受影响。</Text>
+          <Text dimColor>逐字高亮需要逐字时间轴，译文和罗马音按整行显示。</Text>
+        </>
+      ) : null}
       {mode === 'classlink' ? (
         <>
           <Text bold>ClassLink 设置（↑/↓ 选择，Enter 修改，Esc 返回设置）</Text>
@@ -2409,11 +2529,17 @@ export const NowPlaying = () => {
           flexGrow={playerLayout.expanded ? 1 : 0}
           justifyContent={playerLayout.expanded ? 'space-around' : 'flex-start'}
         >
-          <Text dimColor>LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()}</Text>
+          <Text dimColor>
+            LYRICS · {(status.lyricFormat || 'lrc').toUpperCase()} · {LYRIC_MODE_LABELS[lyricMode]}
+            {lyricView?.offsetMs
+              ? ` · 偏移 ${lyricView.offsetMs > 0 ? '+' : ''}${lyricView.offsetMs}ms`
+              : ''}
+          </Text>
           {visiblePreviousLyricLines?.map((line, index) => (
             <ContextLyricLine
               key={`previous-${line.time}-${line.text}`}
               line={line}
+              text={lyricMainText(line, lyricMode)}
               emphasis={
                 index === visiblePreviousLyricLines.length - 1 ? 1 - currentLineEntrance : 0
               }
@@ -2422,35 +2548,42 @@ export const NowPlaying = () => {
           <Box flexDirection="column" marginY={playerLayout.expanded ? 0 : 1}>
             <TimedLyricLine
               line={status.currentLyricLine}
-              position={lyricVisualPosition}
+              text={currentLyricText}
+              wordTimed={useWordTiming(status.currentLyricLine, lyricView, currentLyricText)}
+              position={lyricPosition}
               emphasis={currentLineEmphasis}
               waiting={!status.currentLyricLine && Boolean(status.nextLyricLine)}
               waitingUntil={status.nextLyricLine?.time || 0}
               placeholderAlignRight={Boolean(status.nextLyricLine?.isDuet)}
             />
-            {status.currentLyricLine?.translation ? (
+            {subLyricText ? (
               <Box
                 width="100%"
-                justifyContent={status.currentLyricLine.isDuet ? 'flex-end' : 'flex-start'}
+                justifyContent={status.currentLyricLine?.isDuet ? 'flex-end' : 'flex-start'}
               >
                 <Text color={mixHexColors('#64748b', '#facc15', currentLineEmphasis)}>
-                  {status.currentLyricLine.translation}
+                  {subLyricText}
                 </Text>
               </Box>
             ) : null}
-            {status.backgroundLyricLines?.slice(0, 1).map((line) => (
-              <TimedLyricLine
-                key={`${line.time}-${line.text}`}
-                line={line}
-                position={lyricVisualPosition}
-                emphasis={getLyricLineTransition(lyricVisualPosition, line.time)}
-              />
-            ))}
+            {(lyricView?.background === false ? [] : status.backgroundLyricLines)
+              ?.slice(0, 1)
+              .map((line) => (
+                <TimedLyricLine
+                  key={`${line.time}-${line.text}`}
+                  line={line}
+                  text={lyricMainText(line, lyricMode)}
+                  wordTimed={useWordTiming(line, lyricView, lyricMainText(line, lyricMode))}
+                  position={lyricPosition}
+                  emphasis={getLyricLineTransition(lyricPosition, line.time)}
+                />
+              ))}
           </Box>
           {visibleUpcomingLyricLines?.map((line, index) => (
             <ContextLyricLine
               key={`upcoming-${line.time}-${line.text}`}
               line={line}
+              text={lyricMainText(line, lyricMode)}
               emphasis={index === 0 ? nextLineEntrance : 0}
               emphasisColor={line.words?.length ? '#94a3b8' : '#22d3ee'}
             />

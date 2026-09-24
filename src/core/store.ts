@@ -21,6 +21,10 @@ const defaultConfig: AppConfig = {
     enableTtml: true,
     enableQrc: true,
     amllDbServer: 'https://amlldb.bikonoo.com/%p/%s.ttml',
+    display: 'both',
+    karaoke: true,
+    background: true,
+    offsetMs: 0,
   },
 }
 

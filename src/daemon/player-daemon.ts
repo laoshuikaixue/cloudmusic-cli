@@ -199,6 +199,11 @@ export class PlayerDaemon {
       .catch(() => undefined)
   }
 
+  /** 歌词定位用的位置：偏移只影响歌词行选择，不改变播放进度 */
+  private lyricPosition(position: number) {
+    return position + this.config.lyrics.offsetMs / 1000
+  }
+
   private syncClassLink() {
     this.classLink.sync({
       song: this.song,
@@ -206,7 +211,7 @@ export class PlayerDaemon {
       lyricRevision: this.lyricRevision,
       lyrics: this.lyricResult,
       state: this.state,
-      positionMs: this.pipeline.getPosition() * 1000,
+      positionMs: this.lyricPosition(this.pipeline.getPosition()) * 1000,
     })
   }
 
@@ -687,7 +692,7 @@ export class PlayerDaemon {
 
   status(): PlaybackStatus {
     const position = this.pipeline.getPosition()
-    const lyricContext = getLyricContext(this.lyrics, position)
+    const lyricContext = getLyricContext(this.lyrics, this.lyricPosition(position))
     const currentLyricLine = lyricContext.currentLine
     const nextLyricLine = lyricContext.upcomingLines[0]
     return {
@@ -716,10 +721,16 @@ export class PlayerDaemon {
       nextLyricLine,
       previousLyricLines: lyricContext.previousLines,
       upcomingLyricLines: lyricContext.upcomingLines,
-      backgroundLyricLines: findActiveBackgroundLyrics(this.lyrics, position),
+      backgroundLyricLines: findActiveBackgroundLyrics(this.lyrics, this.lyricPosition(position)),
       lyricFormat: this.lyricResult.format,
       lyricSource: this.lyricResult.source,
       lyricsUpgraded: this.lyricResult.upgraded,
+      lyricView: {
+        mode: this.config.lyrics.display,
+        karaoke: this.config.lyrics.karaoke,
+        background: this.config.lyrics.background,
+        offsetMs: this.config.lyrics.offsetMs,
+      },
       spectrumGeneration: this.pipeline.getSpectrumGeneration(),
       sourceFailure: this.sourceFailure,
       error: this.error,
