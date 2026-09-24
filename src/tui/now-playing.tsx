@@ -11,6 +11,13 @@ import { normalizeControlInput } from './controls.js'
 import { MAX_LYRIC_OFFSET_MS, QUALITY_LEVELS, type QualityLevel } from '../core/config.js'
 import { formatSleepRemaining } from '../daemon/sleep.js'
 import {
+  formatLocalDuration,
+  LOCAL_STATS_RANGE_LABELS,
+  LOCAL_STATS_RANGES,
+  type LocalStatsRange,
+  type LocalStatsSummary,
+} from '../core/local-stats.js'
+import {
   LYRIC_MODE_LABELS,
   lyricMainText,
   lyricPositionOf,
@@ -47,6 +54,7 @@ import type {
   PlaybackStatus,
   PlaylistSummary,
   QueueSnapshot,
+  RecentResourceEntry,
   SigninResult,
   Song,
   SpectrumFrame,
@@ -73,6 +81,7 @@ type PageMode =
   | 'classlink-port'
   | 'lyrics-view'
   | 'sleep-minutes'
+  | 'local-stats'
   | 'account'
   | 'comments'
   | 'collections'
@@ -353,7 +362,7 @@ export const NowPlaying = () => {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
   const [playlistPageTitle, setPlaylistPageTitle] = useState('我的歌单')
   const [playlistPageKind, setPlaylistPageKind] = useState<
-    'library' | 'daily' | 'toplist' | 'discover'
+    'library' | 'daily' | 'toplist' | 'discover' | 'recent'
   >('library')
   const [playlistEditAction, setPlaylistEditAction] = useState<'create' | 'rename'>('create')
   const [playlistEditTarget, setPlaylistEditTarget] = useState<PlaylistSummary | null>(null)
@@ -361,7 +370,9 @@ export const NowPlaying = () => {
   const [playlistPickerReturnMode, setPlaylistPickerReturnMode] = useState<PageMode>('normal')
   const [deleteArmedId, setDeleteArmedId] = useState<number | null>(null)
   const [collections, setCollections] = useState<CollectionSummary[]>([])
-  const [collectionType, setCollectionType] = useState<'album' | 'artist'>('album')
+  const [collectionTitle, setCollectionTitle] = useState('收藏专辑')
+  const [localStats, setLocalStats] = useState<LocalStatsSummary | null>(null)
+  const [localStatsRange, setLocalStatsRange] = useState<LocalStatsRange>('week')
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
   const [libraryIndex, setLibraryIndex] = useState(0)
   const [librarySource, setLibrarySource] = useState<LibrarySource | null>(null)
@@ -1060,7 +1071,7 @@ export const NowPlaying = () => {
         type === 'album' ? 'library.albums' : 'library.artists',
       )
       setCollections(items)
-      setCollectionType(type)
+      setCollectionTitle(type === 'album' ? '收藏专辑' : '关注歌手')
       setLibraryIndex(0)
       setMode('collections')
       setMessage(`${type === 'album' ? '收藏专辑' : '关注歌手'} · ${items.length} 项`)
@@ -1080,6 +1091,74 @@ export const NowPlaying = () => {
       setLibraryIndex(0)
       setMode('tracks')
       setMessage(`${name} · ${entries.length} 首`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openRecentPlaylists = async () => {
+    setMessage('正在加载最近播放的歌单…')
+    try {
+      const items = await callDaemon<RecentResourceEntry[]>('library.recent.playlists', {
+        limit: 50,
+      })
+      setPlaylists(
+        items.map((item) => ({
+          id: item.id,
+          name: item.name,
+          ...(item.cover ? { cover: item.cover } : {}),
+          trackCount: 0,
+        })),
+      )
+      setPlaylistPageTitle('最近播放 · 歌单')
+      setPlaylistPageKind('recent')
+      setLibraryIndex(0)
+      setMode('playlists')
+      setMessage(`最近播放 ${items.length} 个歌单 · Enter 查看曲目`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openRecentAlbums = async () => {
+    setMessage('正在加载最近播放的专辑…')
+    try {
+      const items = await callDaemon<RecentResourceEntry[]>('library.recent.albums', {
+        limit: 50,
+      })
+      setCollections(
+        items.map((item) => ({
+          id: item.id,
+          name: item.name,
+          type: 'album' as const,
+          ...(item.cover ? { cover: item.cover } : {}),
+          ...(item.count !== undefined ? { count: item.count } : {}),
+          subtitle: item.playTime ? new Date(item.playTime).toLocaleDateString() : undefined,
+        })),
+      )
+      setCollectionTitle('最近播放 · 专辑')
+      setLibraryIndex(0)
+      setMode('collections')
+      setMessage(`最近播放 ${items.length} 张专辑 · Enter 查看曲目`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openLocalStats = async (range: LocalStatsRange = localStatsRange) => {
+    setMessage('正在统计本机听歌记录…')
+    try {
+      const summary = await callDaemon<LocalStatsSummary>('stats.local', {
+        type: range,
+        limit: 20,
+      })
+      setLocalStatsRange(range)
+      setLocalStats(summary)
+      setLibraryIndex(0)
+      setMode('local-stats')
+      setMessage(
+        `${LOCAL_STATS_RANGE_LABELS[range]} · ${formatLocalDuration(summary.totalSeconds)} · ${summary.songCount} 首`,
+      )
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -1621,28 +1700,33 @@ export const NowPlaying = () => {
     if (mode === 'library') {
       if (key.escape || controlInput === 'l') return setMode('normal')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
-      if (key.downArrow) return setLibraryIndex((index) => Math.min(13, index + 1))
-      if (key.return) {
-        if (libraryIndex === 0) void openPlaylists()
-        if (libraryIndex === 1) void openDaily()
-        if (libraryIndex === 2) void openDailyPlaylists()
-        if (libraryIndex === 3) {
-          setLibraryIndex(0)
-          setMode('discover-categories')
-        }
-        if (libraryIndex === 4) void openToplists()
-        if (libraryIndex === 5) {
-          setLibraryIndex(0)
-          setMode('new-regions')
-        }
-        if (libraryIndex === 6) void playFm()
-        if (libraryIndex === 7) void playHeartMode()
-        if (libraryIndex === 8) void openHistory()
-        if (libraryIndex === 9) void openCloud()
-        if (libraryIndex === 10) void openCollections('album')
-        if (libraryIndex === 11) void openCollections('artist')
-        if (libraryIndex === 12) void openListeningRecord('week')
-        if (libraryIndex === 13) void openListeningRecord('all')
+      if (key.downArrow) {
+        return setLibraryIndex((index) => Math.min(libraryEntries.length - 1, index + 1))
+      }
+      if (key.return) libraryEntries[libraryIndex]?.open()
+      return
+    }
+
+    if (mode === 'local-stats') {
+      if (key.escape || controlInput === 'l') return setMode('library')
+      const topCount = localStats?.topSongs.length || 0
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow)
+        return setLibraryIndex((index) => Math.min(Math.max(0, topCount - 1), index + 1))
+      if (key.leftArrow || key.rightArrow) {
+        const order = LOCAL_STATS_RANGES
+        const current = Math.max(0, order.indexOf(localStatsRange))
+        const step = key.leftArrow ? -1 : 1
+        void openLocalStats(order[(current + step + order.length) % order.length])
+        return
+      }
+      if (key.return && localStats?.topSongs[libraryIndex]) {
+        const entry = localStats.topSongs[libraryIndex]!
+        void callDaemon('play', { id: entry.song.id })
+          .then(() => setMessage(`正在播放：${entry.song.name}`))
+          .catch((error: unknown) =>
+            setMessage(error instanceof Error ? error.message : String(error)),
+          )
       }
       return
     }
@@ -1681,7 +1765,12 @@ export const NowPlaying = () => {
         if (playlistPageKind === 'toplist') void openToplist(playlists[libraryIndex])
         else void openPlaylist(playlists[libraryIndex])
       }
-      if (controlInput === 'f' && playlistPageKind !== 'toplist' && playlists[libraryIndex]) {
+      if (
+        controlInput === 'f' &&
+        playlistPageKind !== 'toplist' &&
+        playlistPageKind !== 'recent' &&
+        playlists[libraryIndex]
+      ) {
         void togglePlaylistSubscription(playlists[libraryIndex])
       }
       if (controlInput === 'c' && playlistPageKind === 'library') {
@@ -1994,6 +2083,38 @@ export const NowPlaying = () => {
   const commentStart = Math.max(0, Math.min(commentIndex - 2, comments.length - 6))
   const visibleComments = comments.slice(commentStart, commentStart + 6)
   const shownInput = inputValue.slice(-Math.max(12, terminalWidth - 18))
+  const libraryEntries: Array<{ label: string; open: () => void }> = [
+    { label: '我的歌单', open: () => void openPlaylists() },
+    { label: '每日推荐歌曲', open: () => void openDaily() },
+    { label: '每日推荐歌单', open: () => void openDailyPlaylists() },
+    {
+      label: '歌单广场',
+      open: () => {
+        setLibraryIndex(0)
+        setMode('discover-categories')
+      },
+    },
+    { label: '网易云官方榜单', open: () => void openToplists() },
+    {
+      label: '新歌速递',
+      open: () => {
+        setLibraryIndex(0)
+        setMode('new-regions')
+      },
+    },
+    { label: '私人 FM', open: () => void playFm() },
+    { label: '心动模式', open: () => void playHeartMode() },
+    { label: '最近播放', open: () => void openHistory() },
+    { label: '音乐云盘', open: () => void openCloud() },
+    { label: '收藏专辑', open: () => void openCollections('album') },
+    { label: '关注歌手', open: () => void openCollections('artist') },
+    { label: '本周听歌排行', open: () => void openListeningRecord('week') },
+    { label: '全部听歌排行', open: () => void openListeningRecord('all') },
+    { label: '最近播放 · 歌单', open: () => void openRecentPlaylists() },
+    { label: '最近播放 · 专辑', open: () => void openRecentAlbums() },
+    { label: '本机听歌统计', open: () => void openLocalStats() },
+  ]
+
   const cycleQuality = (quality: string, direction: number) => {
     const current = Math.max(0, QUALITY_LEVELS.indexOf(quality as QualityLevel))
     return QUALITY_LEVELS[
@@ -2330,27 +2451,45 @@ export const NowPlaying = () => {
       {mode === 'library' ? (
         <>
           <Text bold>音乐库（↑/↓ 选择，Enter 打开，l/Esc 返回）</Text>
-          {[
-            '我的歌单',
-            '每日推荐歌曲',
-            '每日推荐歌单',
-            '歌单广场',
-            '网易云官方榜单',
-            '新歌速递',
-            '私人 FM',
-            '心动模式',
-            '最近播放',
-            '音乐云盘',
-            '收藏专辑',
-            '关注歌手',
-            '本周听歌排行',
-            '全部听歌排行',
-          ].map((label, index) => (
-            <Text key={label} color={index === libraryIndex ? 'cyan' : undefined}>
+          {libraryEntries.map((entry, index) => (
+            <Text key={entry.label} color={index === libraryIndex ? 'cyan' : undefined}>
               {index === libraryIndex ? '▶ ' : '  '}
-              {label}
+              {entry.label}
             </Text>
           ))}
+        </>
+      ) : null}
+      {mode === 'local-stats' ? (
+        <>
+          <Text bold>
+            本机听歌统计 · {localStats ? LOCAL_STATS_RANGE_LABELS[localStatsRange] : '加载中'}
+            （←/→ 切换区间，Enter 播放，l/Esc 返回）
+          </Text>
+          {localStats ? (
+            <>
+              <Text>
+                {formatLocalDuration(localStats.totalSeconds)} · {localStats.activeDays} 天 ·{' '}
+                {localStats.songCount} 首
+              </Text>
+              <Text dimColor>
+                区间 {localStats.from} ~ {localStats.to} · 仅统计本机播放，不依赖服务端报告
+              </Text>
+              {localStats.topSongs.length ? (
+                localStats.topSongs.map((entry, index) => (
+                  <Text key={entry.song.id} color={index === libraryIndex ? 'cyan' : undefined}>
+                    {index === libraryIndex ? '▶ ' : '  '}
+                    {String(index + 1).padStart(2, ' ')}. {entry.song.name} —{' '}
+                    {entry.song.artists.join(' / ')} · {formatLocalDuration(entry.seconds)} [
+                    {entry.song.id}]
+                  </Text>
+                ))
+              ) : (
+                <Text dimColor>这个区间还没有本机播放记录，先听几首歌再回来看看</Text>
+              )}
+            </>
+          ) : (
+            <Text dimColor>正在统计…</Text>
+          )}
         </>
       ) : null}
       {mode === 'discover-categories' ? (
@@ -2396,7 +2535,8 @@ export const NowPlaying = () => {
               <Text key={playlist.id} color={index === libraryIndex ? 'cyan' : undefined}>
                 {index === libraryIndex ? '▶ ' : '  '}
                 {playlist.subscribed ? '♥ ' : ''}
-                {playlist.name} · {playlist.trackCount} 首
+                {playlist.name}
+                {playlist.trackCount ? ` · ${playlist.trackCount} 首` : ''}
                 {playlist.updateFrequency ? ` · ${playlist.updateFrequency}` : ''}
               </Text>
             )
@@ -2428,9 +2568,7 @@ export const NowPlaying = () => {
       ) : null}
       {mode === 'collections' ? (
         <>
-          <Text bold>
-            {collectionType === 'album' ? '收藏专辑' : '关注歌手'}（↑/↓ 选择，Enter 查看，Esc 返回）
-          </Text>
+          <Text bold>{collectionTitle}（↑/↓ 选择，Enter 查看，Esc 返回）</Text>
           {visibleCollections.map((collection, offset) => {
             const index = collectionStart + offset
             return (

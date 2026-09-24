@@ -149,3 +149,22 @@ export const localStatsWindow = (now: number, range: LocalStatsRange) => {
   const days = Math.max(1, RANGE_DAYS[range] || RANGE_DAYS.week)
   return { from: dayKeyOffset(now, days - 1), to: localDateKey(now) }
 }
+
+export const LOCAL_STATS_RANGES: LocalStatsRange[] = ['today', 'week', 'month', 'year']
+
+export const LOCAL_STATS_RANGE_LABELS: Record<LocalStatsRange, string> = {
+  today: '今日',
+  week: '近 7 天',
+  month: '近 30 天',
+  year: '近 365 天',
+}
+
+/** 把秒数说成人话：不足一小时精确到分，超过一小时带小时 */
+export const formatLocalDuration = (seconds: number) => {
+  const total = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  if (hours) return `${hours} 小时 ${minutes} 分`
+  if (minutes) return `${minutes} 分`
+  return `${total} 秒`
+}
