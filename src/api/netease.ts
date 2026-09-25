@@ -1035,6 +1035,38 @@ export class NeteaseApi {
     return this.recentResources('record_recent_album', limit)
   }
 
+  /**
+   * 播客电台的节目列表。每个节目带 mainSong（真实歌曲 ID），
+   * 因此取源与歌词都走普通歌曲链路，这里只把节目还原成 Song 列表。
+   */
+  async djPrograms(rid: number, name: string, limit = 50, offset = 0) {
+    const result = await this.call<any>('dj_program', { rid, limit, offset, asc: false })
+    const songs = (result?.programs || [])
+      .map((program: any): Song | undefined => {
+        const main = program?.mainSong
+        if (!main || !Number.isInteger(Number(main.id)) || Number(main.id) <= 0) return undefined
+        const song = normalizeSong(main)
+        if (!song.duration && Number.isFinite(Number(program.duration))) {
+          song.duration = Number(program.duration)
+        }
+        if (!song.name && program?.name) song.name = String(program.name)
+        return song
+      })
+      .filter((song: Song | undefined): song is Song => Boolean(song))
+    const total = Number(result?.count)
+    return {
+      collection: {
+        id: rid,
+        name: name || '播客节目',
+        type: 'radio' as const,
+        count: Number.isFinite(total) && total > 0 ? total : songs.length,
+        countUnit: '期',
+      },
+      songs,
+      more: Boolean(result?.more),
+    }
+  }
+
   recentRadios(limit = 50) {
     return this.recentResources('record_recent_dj', limit)
   }

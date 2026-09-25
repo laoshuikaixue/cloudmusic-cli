@@ -16,6 +16,7 @@ export type QueueContextType =
   | 'toplist'
   | 'new'
   | 'similar'
+  | 'dj'
 export type ScrobbleMode = 'ncbl' | 'legacy'
 export type ReplayGainMode = 'off' | 'track' | 'album'
 export type SleepTimerMode = 'timer' | 'song-end'
@@ -60,10 +61,12 @@ export interface CloudLibrary {
 export interface CollectionSummary {
   id: number
   name: string
-  type: 'album' | 'artist'
+  type: 'album' | 'artist' | 'radio'
   cover?: string
   subtitle?: string
   count?: number
+  /** 计数单位，默认「首」；播客节目用「期」 */
+  countUnit?: string
 }
 
 export interface ListeningRecordEntry {

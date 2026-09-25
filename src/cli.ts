@@ -801,6 +801,21 @@ library
     ),
   )
 library
+  .command('dj <id>')
+  .description('播客电台的节目列表（节目按普通歌曲取源）')
+  .option('--play', '播放该电台已加载的节目')
+  .option('--name <name>', '电台名称，用于队列标题')
+  .option('--index <index>', '从指定索引开始播放', '0')
+  .action(async (id, options) =>
+    output(
+      await withDaemon(options.play ? 'library.dj.play' : 'library.dj', {
+        id: Number(id),
+        name: typeof options.name === 'string' ? options.name : '',
+        index: Number(options.index),
+      }),
+    ),
+  )
+library
   .command('record')
   .option('--week', '查看最近一周排行')
   .option('--play', '播放听歌排行')

@@ -730,6 +730,15 @@ export class PlayerDaemon {
     })
   }
 
+  async playRadio(id: number, name: string, index = 0) {
+    const result = await this.api.djPrograms(id, name)
+    return this.replaceQueue(result.songs, index, {
+      type: 'dj',
+      id,
+      name: result.collection.name,
+    })
+  }
+
   async playListeningRecord(range: 'week' | 'all', index = 0) {
     const entries = await this.api.listeningRecord(range)
     return this.replaceQueue(
@@ -805,6 +814,8 @@ export class PlayerDaemon {
     if (this.state === 'playing') this.scrobblePlayedSeconds += elapsed
     const song = this.song
     if (!this.config.scrobble.enabled || !song || !this.store.getCookie()) return
+    // 播客节目按歌曲上报会把错误来源写进听歌记录，接口没有验证过的电台上报载荷
+    if (this.queue.context?.type === 'dj') return
     if (this.scrobbledCycle === this.cycle) return
     const duration = song.duration / 1000
     if (duration <= 30) return
@@ -889,6 +900,7 @@ export class PlayerDaemon {
       'library.cloud.play',
       'library.album.play',
       'library.artist.play',
+      'library.dj.play',
       'library.record.play',
       'library.recent.play',
       'classlink.set',
@@ -1279,6 +1291,17 @@ export class PlayerDaemon {
       case 'library.artist.play':
         return this.playArtist(
           numberParam(params.id, 'id'),
+          params.index === undefined ? 0 : numberParam(params.index, 'index'),
+        )
+      case 'library.dj':
+        return this.api.djPrograms(
+          numberParam(params.id, 'id'),
+          typeof params.name === 'string' ? params.name : '',
+        )
+      case 'library.dj.play':
+        return this.playRadio(
+          numberParam(params.id, 'id'),
+          typeof params.name === 'string' ? params.name : '',
           params.index === undefined ? 0 : numberParam(params.index, 'index'),
         )
       case 'library.record': {

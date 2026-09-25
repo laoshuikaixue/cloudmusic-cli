@@ -436,6 +436,22 @@ const tools = [
     },
   },
   {
+    name: 'get_dj_programs',
+    description:
+      '获取播客电台的节目列表，节目按普通歌曲取源；play 为 true 时替换队列并播放（播客队列不做听歌上报）。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: '电台（播客）ID' },
+        name: { type: 'string' },
+        limit: { type: 'number', default: 50 },
+        index: { type: 'number', default: 0 },
+        play: { type: 'boolean', default: false },
+      },
+      required: ['id'],
+    },
+  },
+  {
     name: 'get_listen_stats',
     description: '听歌足迹：累计听歌时长与周/月/年听歌习惯报告；today 为 true 时返回今日听歌歌曲。',
     inputSchema: {
@@ -518,6 +534,13 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
       if (args.type === 'artist') return request('similar.artists', args)
       return request(args.play === true ? 'similar.play' : 'similar.songs', args)
     }
+    case 'get_dj_programs':
+      return request(args.play === true ? 'library.dj.play' : 'library.dj', {
+        id: args.id,
+        ...(typeof args.name === 'string' ? { name: args.name } : {}),
+        ...(typeof args.limit === 'number' ? { limit: args.limit } : {}),
+        index: args.index ?? 0,
+      })
     case 'get_listen_stats':
       return request(args.today === true ? 'stats.today' : 'stats.listen', args)
     case 'get_local_listen_stats':

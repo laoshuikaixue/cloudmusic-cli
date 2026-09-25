@@ -95,6 +95,7 @@ type LibrarySource =
   | { type: 'cloud'; name: string }
   | { type: 'album'; id: number; name: string }
   | { type: 'artist'; id: number; name: string }
+  | { type: 'dj'; id: number; name: string }
   | { type: 'record'; range: 'week' | 'all'; name: string }
   | { type: 'toplist'; id: number; name: string }
   | { type: 'new'; area: number; name: string }
@@ -1145,6 +1146,31 @@ export const NowPlaying = () => {
     }
   }
 
+  const openRecentRadios = async () => {
+    setMessage('正在加载最近播放的播客…')
+    try {
+      const items = await callDaemon<RecentResourceEntry[]>('library.recent.radios', {
+        limit: 50,
+      })
+      setCollections(
+        items.map((item) => ({
+          id: item.id,
+          name: item.name,
+          type: 'radio' as const,
+          ...(item.cover ? { cover: item.cover } : {}),
+          ...(item.count !== undefined ? { count: item.count, countUnit: '期' } : {}),
+          subtitle: item.playTime ? new Date(item.playTime).toLocaleDateString() : undefined,
+        })),
+      )
+      setCollectionTitle('最近播放 · 播客')
+      setLibraryIndex(0)
+      setMode('collections')
+      setMessage(`最近播放 ${items.length} 个播客 · Enter 查看节目列表`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const openLocalStats = async (range: LocalStatsRange = localStatsRange) => {
     setMessage('正在统计本机听歌记录…')
     try {
@@ -1170,16 +1196,28 @@ export const NowPlaying = () => {
   ) => {
     setMessage(`正在加载：${collection.name}…`)
     try {
-      const result = await callDaemon<{ collection: CollectionSummary; songs: Song[] }>(
-        collection.type === 'album' ? 'library.album' : 'library.artist',
-        { id: collection.id },
-      )
+      const method =
+        collection.type === 'album'
+          ? 'library.album'
+          : collection.type === 'radio'
+            ? 'library.dj'
+            : 'library.artist'
+      const result = await callDaemon<{ collection: CollectionSummary; songs: Song[] }>(method, {
+        id: collection.id,
+        ...(collection.type === 'radio' ? { name: collection.name } : {}),
+      })
       setLibrarySongs(result.songs)
-      setLibrarySource({ type: collection.type, id: collection.id, name: collection.name })
+      setLibrarySource({
+        type: collection.type === 'radio' ? 'dj' : collection.type,
+        id: collection.id,
+        name: collection.name,
+      })
       setTrackReturnMode(returnMode)
       setLibraryIndex(0)
       setMode('tracks')
-      setMessage(`${collection.name} · ${result.songs.length} 首歌曲`)
+      setMessage(
+        `${collection.name} · ${result.songs.length} ${collection.countUnit || '首'}${collection.count && collection.count > result.songs.length ? ` / 共 ${collection.count} ${collection.countUnit || '首'}` : ''}`,
+      )
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
@@ -1201,6 +1239,12 @@ export const NowPlaying = () => {
         await callDaemon('library.album.play', { id: librarySource.id, index })
       } else if (librarySource.type === 'artist') {
         await callDaemon('library.artist.play', { id: librarySource.id, index })
+      } else if (librarySource.type === 'dj') {
+        await callDaemon('library.dj.play', {
+          id: librarySource.id,
+          name: librarySource.name,
+          index,
+        })
       } else if (librarySource.type === 'record') {
         await callDaemon('library.record.play', { range: librarySource.range, index })
       } else if (librarySource.type === 'toplist') {
@@ -2112,6 +2156,7 @@ export const NowPlaying = () => {
     { label: '全部听歌排行', open: () => void openListeningRecord('all') },
     { label: '最近播放 · 歌单', open: () => void openRecentPlaylists() },
     { label: '最近播放 · 专辑', open: () => void openRecentAlbums() },
+    { label: '最近播放 · 播客', open: () => void openRecentRadios() },
     { label: '本机听歌统计', open: () => void openLocalStats() },
   ]
 
@@ -2424,7 +2469,7 @@ export const NowPlaying = () => {
                 {index === selectedIndex ? '▶ ' : '  '}
                 {collection.name}
                 {collection.subtitle ? ` — ${collection.subtitle}` : ''}
-                {collection.count ? ` · ${collection.count} 首` : ''}
+                {collection.count ? ` · ${collection.count} ${collection.countUnit || '首'}` : ''}
               </Text>
             )
           })}
@@ -2579,7 +2624,7 @@ export const NowPlaying = () => {
                 {index === libraryIndex ? '▶ ' : '  '}
                 {collection.name}
                 {collection.subtitle ? ` — ${collection.subtitle}` : ''}
-                {collection.count ? ` · ${collection.count} 首` : ''}
+                {collection.count ? ` · ${collection.count} ${collection.countUnit || '首'}` : ''}
               </Text>
             )
           })}

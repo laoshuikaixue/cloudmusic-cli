@@ -159,6 +159,8 @@ ncm library recent
 ncm library recent --type playlist
 ncm library recent --type album
 ncm library recent --type radio
+ncm library dj 957855910
+ncm library dj 957855910 --play --name "A State Of Trance"
 ncm library recent --play --limit 30
 ncm library cloud --play
 ncm library albums
@@ -184,7 +186,8 @@ ncm quit
 播放页快捷键：
 
 - `/`：搜索网易云歌曲、歌单、专辑或歌手；输入时按 `Tab` 切换搜索类型
-- `l`：打开音乐库，可浏览歌单、日推、歌单广场、官方榜单、新歌速递、FM、心动模式、最近播放（歌曲/歌单/专辑）、云盘、专辑、歌手和听歌排行
+- `l`：打开音乐库，可浏览歌单、日推、歌单广场、官方榜单、新歌速递、FM、心动模式、最近播放（歌曲/歌单/专辑/播客）、云盘、专辑、歌手和听歌排行
+- 播客：音乐库“最近播放 · 播客”进入任一电台可看到节目列表，节目按普通歌曲取源，`Enter` 播放、`a` 从第一期整队播放。播客队列不做听歌上报，避免把节目当成歌曲写进听歌记录
 - 音乐库里的“本机听歌统计”：`←` / `→` 在今日、近 7 天、近 30 天、近 365 天之间切换，`Enter` 直接播放选中的 TOP 歌曲
 - `o` 或 `,`：打开独立设置页
 - 账号登录、验证和退出：进入设置页后打开“网易云账号”
