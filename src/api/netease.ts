@@ -263,6 +263,35 @@ export class NeteaseApi {
     }
   }
 
+  /** 电台（播客）搜索，接口在 result.djRadios 里返回电台列表 */
+  async searchRadios(keywords: string, limit = 20, offset = 0) {
+    const result = await this.call<any>('cloudsearch', { keywords, type: 1009, limit, offset })
+    const list = result?.result?.djRadios || []
+    return {
+      items: list.map((radio: any): CollectionSummary => {
+        const host =
+          typeof radio?.dj?.nickname === 'string' && radio.dj.nickname.trim()
+            ? radio.dj.nickname.trim()
+            : typeof radio?.category === 'string' && radio.category.trim()
+              ? radio.category.trim()
+              : undefined
+        const programs = Number(radio?.programCount)
+        return {
+          id: Number(radio?.id),
+          name: String(radio?.name || '未命名电台'),
+          type: 'radio' as const,
+          ...(radio?.picUrl ? { cover: String(radio.picUrl) } : {}),
+          ...(host ? { subtitle: host } : {}),
+          ...(Number.isFinite(programs) && programs > 0
+            ? { count: programs, countUnit: '期' as const }
+            : {}),
+        }
+      }),
+      total: Number(result?.result?.djRadiosCount || 0),
+      hasMore: Boolean(result?.result?.hasMore),
+    }
+  }
+
   /** 搜索关键词联想（输入补全） */
   async searchSuggest(keywords: string): Promise<string[]> {
     const result = await this.call<any>('search_suggest', { keywords, type: 'mobile' })

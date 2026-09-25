@@ -140,13 +140,13 @@ const readClassLinkTokenInput = () =>
 
 program
   .command('search <keywords>')
-  .description('搜索歌曲、歌单、专辑或歌手')
+  .description('搜索歌曲、歌单、专辑、歌手或电台')
   .option('-l, --limit <number>', '返回数量', '20')
-  .option('-t, --type <type>', '搜索类型：song、playlist、album、artist', 'song')
+  .option('-t, --type <type>', '搜索类型：song、playlist、album、artist、radio', 'song')
   .action(async (keywords, options) => {
     const type = String(options.type)
-    if (!['song', 'playlist', 'album', 'artist'].includes(type)) {
-      throw new Error('type 必须是 song、playlist、album 或 artist')
+    if (!['song', 'playlist', 'album', 'artist', 'radio'].includes(type)) {
+      throw new Error('type 必须是 song、playlist、album、artist 或 radio')
     }
     if (type === 'song') {
       const result = await withDaemon<{ songs: Song[]; total: number }>('search', {
@@ -169,13 +169,15 @@ program
       )
     }
     const result = await withDaemon<{ items: CollectionSummary[]; total: number }>(
-      type === 'album' ? 'search.albums' : 'search.artists',
+      type === 'album' ? 'search.albums' : type === 'radio' ? 'search.radios' : 'search.artists',
       { keywords, limit: Number(options.limit) },
     )
     return output(result, () =>
       result.items.forEach((item, index) =>
         console.log(
-          `${index + 1}. ${item.name}${item.subtitle ? ` — ${item.subtitle}` : ''} [${item.id}]`,
+          `${index + 1}. ${item.name}${item.subtitle ? ` — ${item.subtitle}` : ''}${
+            item.count ? ` · ${item.count} ${item.countUnit || '首'}` : ''
+          } [${item.id}]`,
         ),
       ),
     )

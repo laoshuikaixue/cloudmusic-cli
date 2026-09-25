@@ -23,12 +23,12 @@ const tools = [
   },
   {
     name: 'search_resources',
-    description: '搜索网易云歌单、专辑或歌手。',
+    description: '搜索网易云歌单、专辑、歌手或电台（播客）。',
     inputSchema: {
       type: 'object',
       properties: {
         keywords: { type: 'string' },
-        type: { type: 'string', enum: ['playlist', 'album', 'artist'] },
+        type: { type: 'string', enum: ['playlist', 'album', 'artist', 'radio'] },
         limit: { type: 'number', default: 10 },
         offset: { type: 'number', default: 0 },
       },
@@ -509,7 +509,9 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
           ? 'search.playlists'
           : args.type === 'album'
             ? 'search.albums'
-            : 'search.artists',
+            : args.type === 'radio'
+              ? 'search.radios'
+              : 'search.artists',
         args,
       )
     case 'play_song':

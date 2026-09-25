@@ -14,6 +14,11 @@ const apiWith = (stub: Stub) => {
       limit?: number,
       offset?: number,
     ) => Promise<{ collection: unknown; songs: Record<string, unknown>[]; more: boolean }>
+    searchRadios: (
+      keywords: string,
+      limit?: number,
+      offset?: number,
+    ) => Promise<{ items: Record<string, unknown>[]; total: number; hasMore: boolean }>
   }
 }
 
@@ -86,5 +91,75 @@ describe('djPrograms', () => {
     const api = apiWith(async () => ({ programs: [] }))
     const result = await api.djPrograms(42, '')
     expect(result.collection).toMatchObject({ id: 42, name: '播客节目', count: 0 })
+  })
+})
+
+describe('searchRadios', () => {
+  it('把 result.djRadios 转成可播放的电台条目', async () => {
+    const api = apiWith(async (name, params) => {
+      expect(name).toBe('cloudsearch')
+      expect(params.type).toBe(1009)
+      return {
+        code: 200,
+        result: {
+          djRadiosCount: 42,
+          hasMore: true,
+          djRadios: [
+            {
+              id: 957855910,
+              name: 'A State Of Trance',
+              picUrl: 'https://example/radio.jpg',
+              dj: { nickname: 'A.T.' },
+              programCount: 1300,
+              category: '欧美电音',
+            },
+          ],
+        },
+      }
+    })
+    const result = await api.searchRadios('trance', 20, 0)
+    expect(result.total).toBe(42)
+    expect(result.hasMore).toBe(true)
+    expect(result.items).toEqual([
+      {
+        id: 957855910,
+        name: 'A State Of Trance',
+        type: 'radio',
+        cover: 'https://example/radio.jpg',
+        subtitle: 'A.T.',
+        count: 1300,
+        countUnit: '期',
+      },
+    ])
+  })
+
+  it('没有主播昵称时退回分类，两者都缺时不编造副标题', async () => {
+    const api = apiWith(async () => ({
+      result: {
+        djRadios: [
+          { id: 1, name: '只有分类', category: '情感' },
+          { id: 2, name: '什么都没有' },
+          { id: 3, name: '空白昵称', dj: { nickname: '  ' }, programCount: 0 },
+        ],
+      },
+    }))
+    expect(await api.searchRadios('x')).toMatchObject({
+      total: 0,
+      hasMore: false,
+    })
+    const items = (await api.searchRadios('x')).items
+    expect(items[0]).not.toHaveProperty('cover')
+    expect(items[0]?.subtitle).toBe('情感')
+    expect(items[1]).not.toHaveProperty('subtitle')
+    expect(items[1]).not.toHaveProperty('count')
+    expect(items[2]?.subtitle).toBe(undefined)
+  })
+
+  it('节目数为字符串时也能解析，名称缺失时用占位', async () => {
+    const api = apiWith(async () => ({
+      result: { djRadios: [{ id: 7, programCount: '12' }] },
+    }))
+    const [item] = (await api.searchRadios('y')).items
+    expect(item).toMatchObject({ name: '未命名电台', count: 12, countUnit: '期' })
   })
 })

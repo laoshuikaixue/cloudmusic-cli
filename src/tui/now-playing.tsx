@@ -100,14 +100,15 @@ type LibrarySource =
   | { type: 'toplist'; id: number; name: string }
   | { type: 'new'; area: number; name: string }
 
-type SearchType = 'song' | 'playlist' | 'album' | 'artist'
+type SearchType = 'song' | 'playlist' | 'album' | 'artist' | 'radio'
 
-const searchTypes: SearchType[] = ['song', 'playlist', 'album', 'artist']
+const searchTypes: SearchType[] = ['song', 'playlist', 'album', 'artist', 'radio']
 const searchTypeLabels: Record<SearchType, string> = {
   song: '歌曲',
   playlist: '歌单',
   album: '专辑',
   artist: '歌手',
+  radio: '电台',
 }
 
 const newSongRegions = [
@@ -357,7 +358,9 @@ export const NowPlaying = () => {
   const suggestionSeqRef = useRef(0)
   const [searchPlaylists, setSearchPlaylists] = useState<PlaylistSummary[]>([])
   const [searchCollections, setSearchCollections] = useState<CollectionSummary[]>([])
-  const [searchCollectionType, setSearchCollectionType] = useState<'album' | 'artist'>('album')
+  const [searchCollectionType, setSearchCollectionType] = useState<'album' | 'artist' | 'radio'>(
+    'album',
+  )
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [queueIndex, setQueueIndex] = useState(0)
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([])
@@ -694,16 +697,22 @@ export const NowPlaying = () => {
         setMode('search-playlists')
         setMessage(result.items.length ? `找到 ${result.items.length} 个歌单` : '没有搜索结果')
       } else {
-        const result = await callDaemon<{ items: CollectionSummary[] }>(
-          searchType === 'album' ? 'search.albums' : 'search.artists',
-          { keywords, limit: 20 },
-        )
+        const method =
+          searchType === 'album'
+            ? 'search.albums'
+            : searchType === 'radio'
+              ? 'search.radios'
+              : 'search.artists'
+        const result = await callDaemon<{ items: CollectionSummary[] }>(method, {
+          keywords,
+          limit: 20,
+        })
         setSearchCollections(result.items)
         setSearchCollectionType(searchType)
         setMode('search-collections')
         setMessage(
           result.items.length
-            ? `找到 ${result.items.length} 个${searchType === 'album' ? '专辑' : '歌手'}`
+            ? `找到 ${result.items.length} 个${searchTypeLabels[searchType]}`
             : '没有搜索结果',
         )
       }
@@ -2456,8 +2465,12 @@ export const NowPlaying = () => {
       {mode === 'search-collections' ? (
         <>
           <Text bold>
-            {searchCollectionType === 'album' ? '专辑' : '歌手'}搜索结果（↑/↓ 选择，Enter 查看，/
-            搜索）
+            {searchCollectionType === 'album'
+              ? '专辑'
+              : searchCollectionType === 'radio'
+                ? '电台'
+                : '歌手'}
+            搜索结果（↑/↓ 选择，Enter 查看，/ 搜索）
           </Text>
           {visibleSearchCollections.map((collection, offset) => {
             const index = searchCollectionStart + offset

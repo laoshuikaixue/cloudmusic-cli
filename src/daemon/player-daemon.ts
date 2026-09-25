@@ -943,6 +943,12 @@ export class PlayerDaemon {
           Number(params.limit || 20),
           Number(params.offset || 0),
         )
+      case 'search.radios':
+        return this.api.searchRadios(
+          stringParam(params.keywords, 'keywords'),
+          Number(params.limit || 20),
+          Number(params.offset || 0),
+        )
       case 'play':
         return this.playSong(numberParam(params.id, 'id'))
       case 'pause':
