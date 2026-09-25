@@ -54,6 +54,7 @@ import type {
   PlaybackStatus,
   PlaylistSummary,
   QueueSnapshot,
+  RadioCategory,
   RecentResourceEntry,
   SigninResult,
   Song,
@@ -87,6 +88,8 @@ type PageMode =
   | 'collections'
   | 'new-regions'
   | 'discover-categories'
+  | 'radio-discover'
+  | 'radio-categories'
 
 type LibrarySource =
   | { type: 'playlist'; id: number; name: string; owned: boolean }
@@ -118,6 +121,15 @@ const newSongRegions = [
   { area: 8, name: '日本新歌' },
   { area: 16, name: '韩国新歌' },
 ] as const
+
+const radioDiscoverEntries: Array<{
+  kind: 'subscribed' | 'hot' | 'categories'
+  name: string
+}> = [
+  { kind: 'subscribed', name: '我的订阅电台' },
+  { kind: 'hot', name: '热门电台' },
+  { kind: 'categories', name: '电台分类' },
+]
 
 const discoverEntries = [
   { kind: 'recommended', name: '为你推荐' },
@@ -375,6 +387,8 @@ export const NowPlaying = () => {
   const [deleteArmedId, setDeleteArmedId] = useState<number | null>(null)
   const [collections, setCollections] = useState<CollectionSummary[]>([])
   const [collectionTitle, setCollectionTitle] = useState('收藏专辑')
+  const [collectionParent, setCollectionParent] = useState<PageMode>('collections')
+  const [radioCategories, setRadioCategories] = useState<RadioCategory[]>([])
   const [localStats, setLocalStats] = useState<LocalStatsSummary | null>(null)
   const [localStatsRange, setLocalStatsRange] = useState<LocalStatsRange>('week')
   const [librarySongs, setLibrarySongs] = useState<Song[]>([])
@@ -1082,6 +1096,7 @@ export const NowPlaying = () => {
       )
       setCollections(items)
       setCollectionTitle(type === 'album' ? '收藏专辑' : '关注歌手')
+      setCollectionParent('collections')
       setLibraryIndex(0)
       setMode('collections')
       setMessage(`${type === 'album' ? '收藏专辑' : '关注歌手'} · ${items.length} 项`)
@@ -1147,6 +1162,7 @@ export const NowPlaying = () => {
         })),
       )
       setCollectionTitle('最近播放 · 专辑')
+      setCollectionParent('collections')
       setLibraryIndex(0)
       setMode('collections')
       setMessage(`最近播放 ${items.length} 张专辑 · Enter 查看曲目`)
@@ -1172,12 +1188,57 @@ export const NowPlaying = () => {
         })),
       )
       setCollectionTitle('最近播放 · 播客')
+      setCollectionParent('collections')
       setLibraryIndex(0)
       setMode('collections')
       setMessage(`最近播放 ${items.length} 个播客 · Enter 查看节目列表`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     }
+  }
+
+  const openRadioList = async (
+    method: 'library.dj.subscribed' | 'library.dj.hot' | 'library.dj.category',
+    title: string,
+    parent: PageMode,
+    params: Record<string, unknown> = {},
+  ) => {
+    setMessage(`正在加载${title}…`)
+    try {
+      const items = await callDaemon<CollectionSummary[]>(method, { limit: 50, ...params })
+      setCollections(items)
+      setCollectionTitle(title)
+      setCollectionParent(parent)
+      setLibraryIndex(0)
+      setMode('collections')
+      setMessage(`${title} · ${items.length} 个播客 · Enter 查看节目列表`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openRadioCategories = async () => {
+    setMessage('正在加载电台分类…')
+    try {
+      const categories = radioCategories.length
+        ? radioCategories
+        : await callDaemon<RadioCategory[]>('library.dj.categories')
+      setRadioCategories(categories)
+      setLibraryIndex(0)
+      setMode('radio-categories')
+      setMessage(`电台分类 · ${categories.length} 个 · Enter 查看该分类电台`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openRadioEntry = (entry: (typeof radioDiscoverEntries)[number]) => {
+    if (entry.kind === 'categories') return void openRadioCategories()
+    void openRadioList(
+      entry.kind === 'subscribed' ? 'library.dj.subscribed' : 'library.dj.hot',
+      `播客 · ${entry.name}`,
+      'radio-discover',
+    )
   }
 
   const openLocalStats = async (range: LocalStatsRange = localStatsRange) => {
@@ -1809,6 +1870,33 @@ export const NowPlaying = () => {
       return
     }
 
+    if (mode === 'radio-discover') {
+      if (key.escape) return setMode('library')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setLibraryIndex((index) => Math.min(radioDiscoverEntries.length - 1, index + 1))
+      }
+      if (key.return && radioDiscoverEntries[libraryIndex]) {
+        openRadioEntry(radioDiscoverEntries[libraryIndex])
+      }
+      return
+    }
+
+    if (mode === 'radio-categories') {
+      if (key.escape) return setMode('radio-discover')
+      if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
+      if (key.downArrow) {
+        return setLibraryIndex((index) => Math.min(radioCategories.length - 1, index + 1))
+      }
+      const category = radioCategories[libraryIndex]
+      if (key.return && category) {
+        void openRadioList('library.dj.category', `播客 · ${category.name}`, 'radio-categories', {
+          cateId: category.id,
+        })
+      }
+      return
+    }
+
     if (mode === 'playlists') {
       if (key.escape) return setMode('library')
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
@@ -1860,7 +1948,7 @@ export const NowPlaying = () => {
     }
 
     if (mode === 'collections') {
-      if (key.escape) return setMode('library')
+      if (key.escape) return setMode(collectionParent)
       if (key.upArrow) return setLibraryIndex((index) => Math.max(0, index - 1))
       if (key.downArrow)
         return setLibraryIndex((index) => Math.min(collections.length - 1, index + 1))
@@ -2153,6 +2241,13 @@ export const NowPlaying = () => {
       open: () => {
         setLibraryIndex(0)
         setMode('new-regions')
+      },
+    },
+    {
+      label: '播客发现',
+      open: () => {
+        setLibraryIndex(0)
+        setMode('radio-discover')
       },
     },
     { label: '私人 FM', open: () => void playFm() },
@@ -2571,6 +2666,28 @@ export const NowPlaying = () => {
             <Text key={region.area} color={index === libraryIndex ? 'cyan' : undefined}>
               {index === libraryIndex ? '▶ ' : '  '}
               {region.name}
+            </Text>
+          ))}
+        </>
+      ) : null}
+      {mode === 'radio-discover' ? (
+        <>
+          <Text bold>播客发现（↑/↓ 选择，Enter 打开，Esc 返回）</Text>
+          {radioDiscoverEntries.map((entry, index) => (
+            <Text key={entry.kind} color={index === libraryIndex ? 'cyan' : undefined}>
+              {index === libraryIndex ? '▶ ' : '  '}
+              {entry.name}
+            </Text>
+          ))}
+        </>
+      ) : null}
+      {mode === 'radio-categories' ? (
+        <>
+          <Text bold>电台分类（↑/↓ 选择，Enter 查看该分类电台，Esc 返回）</Text>
+          {radioCategories.map((category, index) => (
+            <Text key={category.id} color={index === libraryIndex ? 'cyan' : undefined}>
+              {index === libraryIndex ? '▶ ' : '  '}
+              {category.name}
             </Text>
           ))}
         </>

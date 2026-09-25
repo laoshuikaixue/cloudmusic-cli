@@ -29,6 +29,7 @@ import type {
   PlaylistSummary,
   RecentPlayEntry,
   RecentResourceEntry,
+  RadioCategory,
   SigninOverview,
   SigninResult,
   Song,
@@ -75,6 +76,17 @@ const formatSong = (song: Song, index?: number) => {
   const artists = song.artists.map((artist) => artist.name).join(' / ')
   return `${prefix}${song.name} — ${artists} [${song.id}]`
 }
+
+const printCollections = (items: CollectionSummary[]) =>
+  output(items, () =>
+    items.forEach((item, index) =>
+      console.log(
+        `${index + 1}. ${item.name}${item.subtitle ? ` — ${item.subtitle}` : ''}${
+          item.count ? ` · ${item.count} ${item.countUnit || '首'}` : ''
+        } [${item.id}]`,
+      ),
+    ),
+  )
 
 const readSecretInput = async (prompt: string, jsonHint: string) => {
   if (!process.stdin.isTTY) {
@@ -814,6 +826,49 @@ library
         id: Number(id),
         name: typeof options.name === 'string' ? options.name : '',
         index: Number(options.index),
+      }),
+    ),
+  )
+library
+  .command('dj-subscribed')
+  .description('我订阅的播客电台')
+  .option('--limit <limit>', '返回数量', '30')
+  .action(async (options) =>
+    printCollections(
+      await withDaemon<CollectionSummary[]>('library.dj.subscribed', {
+        limit: Number(options.limit),
+      }),
+    ),
+  )
+library
+  .command('dj-hot')
+  .description('热门播客电台')
+  .option('--limit <limit>', '返回数量', '30')
+  .action(async (options) =>
+    printCollections(
+      await withDaemon<CollectionSummary[]>('library.dj.hot', { limit: Number(options.limit) }),
+    ),
+  )
+library
+  .command('dj-categories')
+  .description('播客电台分类列表')
+  .action(async () => {
+    const categories = await withDaemon<RadioCategory[]>('library.dj.categories')
+    output(categories, () =>
+      categories.forEach((category, index) =>
+        console.log(`${index + 1}. ${category.name} [${category.id}]`),
+      ),
+    )
+  })
+library
+  .command('dj-category <cateId>')
+  .description('指定分类下的热门播客电台，分类 ID 见 library dj-categories')
+  .option('--limit <limit>', '返回数量', '30')
+  .action(async (cateId, options) =>
+    printCollections(
+      await withDaemon<CollectionSummary[]>('library.dj.category', {
+        cateId: Number(cateId),
+        limit: Number(options.limit),
       }),
     ),
   )

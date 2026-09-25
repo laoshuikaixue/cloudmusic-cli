@@ -17,6 +17,7 @@ import type {
   NewSongArea,
   PlaylistSummary,
   QueueContext,
+  RadioCategory,
   RecentPlayEntry,
   RecentResourceEntry,
   ScrobbleMode,
@@ -144,6 +145,25 @@ export const normalizePlaylist = (raw: any): PlaylistSummary => ({
   updateFrequency: raw?.updateFrequency ? String(raw.updateFrequency) : undefined,
 })
 
+/** djRadios 中的电台条目，搜索结果与发现页共用 */
+const normalizeRadio = (raw: any): CollectionSummary => {
+  const host =
+    typeof raw?.dj?.nickname === 'string' && raw.dj.nickname.trim()
+      ? raw.dj.nickname.trim()
+      : typeof raw?.category === 'string' && raw.category.trim()
+        ? raw.category.trim()
+        : undefined
+  const programs = Number(raw?.programCount)
+  return {
+    id: Number(raw?.id),
+    name: String(raw?.name || '未命名电台'),
+    type: 'radio',
+    ...(raw?.picUrl ? { cover: String(raw.picUrl) } : {}),
+    ...(host ? { subtitle: host } : {}),
+    ...(Number.isFinite(programs) && programs > 0 ? { count: programs, countUnit: '期' } : {}),
+  }
+}
+
 const newSongAreaNames: Record<NewSongArea, string> = {
   0: '全部新歌',
   7: '华语新歌',
@@ -266,30 +286,41 @@ export class NeteaseApi {
   /** 电台（播客）搜索，接口在 result.djRadios 里返回电台列表 */
   async searchRadios(keywords: string, limit = 20, offset = 0) {
     const result = await this.call<any>('cloudsearch', { keywords, type: 1009, limit, offset })
-    const list = result?.result?.djRadios || []
     return {
-      items: list.map((radio: any): CollectionSummary => {
-        const host =
-          typeof radio?.dj?.nickname === 'string' && radio.dj.nickname.trim()
-            ? radio.dj.nickname.trim()
-            : typeof radio?.category === 'string' && radio.category.trim()
-              ? radio.category.trim()
-              : undefined
-        const programs = Number(radio?.programCount)
-        return {
-          id: Number(radio?.id),
-          name: String(radio?.name || '未命名电台'),
-          type: 'radio' as const,
-          ...(radio?.picUrl ? { cover: String(radio.picUrl) } : {}),
-          ...(host ? { subtitle: host } : {}),
-          ...(Number.isFinite(programs) && programs > 0
-            ? { count: programs, countUnit: '期' as const }
-            : {}),
-        }
-      }),
+      items: (result?.result?.djRadios || []).map(normalizeRadio),
       total: Number(result?.result?.djRadiosCount || 0),
       hasMore: Boolean(result?.result?.hasMore),
     }
+  }
+
+  /** 我订阅的电台 */
+  async subscribedRadios(limit = 30, offset = 0): Promise<CollectionSummary[]> {
+    const result = await this.call<any>('dj_sublist', { limit, offset })
+    return (result?.djRadios || []).map(normalizeRadio)
+  }
+
+  /** 电台分类，接口只返回 { name, id } 等分类字段 */
+  async radioCategories(): Promise<RadioCategory[]> {
+    const result = await this.call<any>('dj_catelist')
+    return (result?.categories || [])
+      .map((category: any): RadioCategory | undefined => {
+        const id = Number(category?.id)
+        const name = typeof category?.name === 'string' ? category.name.trim() : ''
+        if (!Number.isInteger(id) || id <= 0 || !name) return undefined
+        return { id, name }
+      })
+      .filter((category: RadioCategory | undefined): category is RadioCategory => Boolean(category))
+  }
+
+  /** 指定分类下的热门电台 */
+  async radiosByCategory(cateId: number, limit = 30, offset = 0): Promise<CollectionSummary[]> {
+    const result = await this.call<any>('dj_radio_hot', { cateId, limit, offset })
+    return (result?.djRadios || []).map(normalizeRadio)
+  }
+
+  async hotRadios(limit = 30, offset = 0): Promise<CollectionSummary[]> {
+    const result = await this.call<any>('dj_hot', { limit, offset })
+    return (result?.djRadios || []).map(normalizeRadio)
   }
 
   /** 搜索关键词联想（输入补全） */

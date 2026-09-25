@@ -69,6 +69,11 @@ export interface CollectionSummary {
   countUnit?: string
 }
 
+export interface RadioCategory {
+  id: number
+  name: string
+}
+
 export interface ListeningRecordEntry {
   song: Song
   playCount: number

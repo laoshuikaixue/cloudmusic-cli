@@ -19,6 +19,14 @@ const apiWith = (stub: Stub) => {
       limit?: number,
       offset?: number,
     ) => Promise<{ items: Record<string, unknown>[]; total: number; hasMore: boolean }>
+    subscribedRadios: (limit?: number, offset?: number) => Promise<Record<string, unknown>[]>
+    hotRadios: (limit?: number, offset?: number) => Promise<Record<string, unknown>[]>
+    radiosByCategory: (
+      cateId: number,
+      limit?: number,
+      offset?: number,
+    ) => Promise<Record<string, unknown>[]>
+    radioCategories: () => Promise<{ id: number; name: string }[]>
   }
 }
 
@@ -91,6 +99,65 @@ describe('djPrograms', () => {
     const api = apiWith(async () => ({ programs: [] }))
     const result = await api.djPrograms(42, '')
     expect(result.collection).toMatchObject({ id: 42, name: '播客节目', count: 0 })
+  })
+})
+
+describe('播客发现页', () => {
+  const radio = { id: 957855910, name: 'A State Of Trance', programCount: 1300 }
+
+  it('dj_sublist 取订阅电台，只读 djRadios', async () => {
+    const calls: Array<{ name: string; params: Record<string, unknown> }> = []
+    const api = apiWith(async (name, params) => {
+      calls.push({ name, params })
+      return { count: 1, djRadios: [radio], hasMore: true, code: 200 }
+    })
+    const items = await api.subscribedRadios(30, 0)
+    expect(calls[0]).toEqual({ name: 'dj_sublist', params: { limit: 30, offset: 0 } })
+    expect(items).toEqual([
+      { id: 957855910, name: 'A State Of Trance', type: 'radio', count: 1300, countUnit: '期' },
+    ])
+  })
+
+  it('dj_hot 取热门电台，接口没有 count 字段', async () => {
+    const seen: string[] = []
+    const api = apiWith(async (name) => {
+      seen.push(name)
+      return { djRadios: [radio], hasMore: false }
+    })
+    expect(await api.hotRadios(10, 20)).toHaveLength(1)
+    expect(seen).toEqual(['dj_hot'])
+  })
+
+  it('dj_radio_hot 用分类接口返回的 cateId 请求', async () => {
+    let params: Record<string, unknown> = {}
+    const api = apiWith(async (name, input) => {
+      params = input
+      return name === 'dj_catelist' ? { categories: [{ name: '情感', id: 3 }] } : { djRadios: [] }
+    })
+    const categories = await api.radioCategories()
+    expect(categories).toEqual([{ id: 3, name: '情感' }])
+    await api.radiosByCategory(categories[0]!.id, 30, 0)
+    expect(params).toEqual({ cateId: 3, limit: 30, offset: 0 })
+  })
+
+  it('分类列表丢掉没有 id 或名称的条目', async () => {
+    const api = apiWith(async () => ({
+      categories: [
+        { name: '音乐播客', id: 2, picUrl: 'https://example/a.jpg' },
+        { name: '  ', id: 5 },
+        { name: '缺 id' },
+        { name: '浮点 id', id: 1.5 },
+      ],
+    }))
+    expect(await api.radioCategories()).toEqual([{ id: 2, name: '音乐播客' }])
+  })
+
+  it('接口返回空列表时不抛错', async () => {
+    const api = apiWith(async () => ({}))
+    expect(await api.subscribedRadios()).toEqual([])
+    expect(await api.hotRadios()).toEqual([])
+    expect(await api.radiosByCategory(3)).toEqual([])
+    expect(await api.radioCategories()).toEqual([])
   })
 })
 

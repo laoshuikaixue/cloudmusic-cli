@@ -452,6 +452,24 @@ const tools = [
     },
   },
   {
+    name: 'discover_radios',
+    description:
+      '播客电台发现：subscribed 我订阅的电台、hot 热门电台、category 指定分类下的电台（需 cateId）、categories 分类列表。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['subscribed', 'hot', 'category', 'categories'],
+          default: 'subscribed',
+        },
+        cateId: { type: 'number', description: '分类 ID，来自 categories' },
+        limit: { type: 'number', default: 30 },
+        offset: { type: 'number', default: 0 },
+      },
+    },
+  },
+  {
     name: 'get_listen_stats',
     description: '听歌足迹：累计听歌时长与周/月/年听歌习惯报告；today 为 true 时返回今日听歌歌曲。',
     inputSchema: {
@@ -543,6 +561,17 @@ const invokeTool = async (name: string, args: Record<string, unknown>) => {
         ...(typeof args.limit === 'number' ? { limit: args.limit } : {}),
         index: args.index ?? 0,
       })
+    case 'discover_radios': {
+      const kind = typeof args.kind === 'string' ? args.kind : 'subscribed'
+      if (kind === 'categories') return request('library.dj.categories')
+      if (kind === 'category') {
+        if (typeof args.cateId !== 'number') {
+          throw new Error('kind=category 需要提供 cateId，可先用 kind=categories 获取分类')
+        }
+        return request('library.dj.category', args)
+      }
+      return request(kind === 'hot' ? 'library.dj.hot' : 'library.dj.subscribed', args)
+    }
     case 'get_listen_stats':
       return request(args.today === true ? 'stats.today' : 'stats.listen', args)
     case 'get_local_listen_stats':

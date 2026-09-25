@@ -1310,6 +1310,21 @@ export class PlayerDaemon {
           typeof params.name === 'string' ? params.name : '',
           params.index === undefined ? 0 : numberParam(params.index, 'index'),
         )
+      case 'library.dj.subscribed':
+        return this.api.subscribedRadios(
+          params.limit === undefined ? 30 : numberParam(params.limit, 'limit'),
+        )
+      case 'library.dj.hot':
+        return this.api.hotRadios(
+          params.limit === undefined ? 30 : numberParam(params.limit, 'limit'),
+        )
+      case 'library.dj.categories':
+        return this.api.radioCategories()
+      case 'library.dj.category':
+        return this.api.radiosByCategory(
+          numberParam(params.cateId, 'cateId'),
+          params.limit === undefined ? 30 : numberParam(params.limit, 'limit'),
+        )
       case 'library.record': {
         const range = params.range === 'week' ? 'week' : 'all'
         return this.api.listeningRecord(range)
