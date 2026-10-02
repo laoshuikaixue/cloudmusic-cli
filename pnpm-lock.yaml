@@ -26,6 +26,9 @@ importers:
       ink:
         specifier: ^6.8.0
         version: 6.8.0(@types/react@19.3.0)(react@19.3.0)
+      music-metadata:
+        specifier: 11.16.0
+        version: 11.16.0
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0

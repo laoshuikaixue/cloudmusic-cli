@@ -316,3 +316,21 @@ pnpm build
 ---
 
 Powered By LaoShui @ 2026
+
+### 上传本地音频到音乐云盘
+
+```sh
+# 完全本地检查；不启动 daemon、不读取认证、不连接网络
+ncm --json library cloud-upload ./lesson.mp3 --dry-run --title '英语学习_第一课' --name '英语学习_第一课.mp3'
+# 先使用现有 ncm login 登录，然后明确执行上传
+ncm --json library cloud-upload ./lesson.mp3 --title '英语学习_第一课' --name '英语学习_第一课.mp3'
+# 可复用现有歌单命令；使用上传返回的 trackId 加入歌单
+ncm --json library playlist-create '英语学习' --private
+ncm --json library playlist-tracks <playlistId> <trackId>
+```
+
+上传支持 MP3、FLAC、WAV、M4A、OGG，单文件上限 200 MiB。原文件始终保留；通过内存 Buffer 调用 API，不传入会被上游清理的 `tempFilePath`。音频标签中的 title 优先于文件名。`--name` 只改变上传文件名，必须保留扩展名；`--title` 当前仅支持 MP3，需要 FFmpeg，以音频流复制方式为独立临时副本设置 title 并验证标签，不重新编码。daemon 执行时使用已配置的 `binaries.ffmpeg`，本地 dry-run 使用 PATH 中的 FFmpeg。
+
+成功输出 `songId`（云盘 ID）、`trackId`（用于歌单的歌曲 ID）、摘要及 `verified`，只有按 ID 回读云盘并核对 title 后才报告成功。重复执行只在云盘条目提供相同 MD5 时跳过，不根据同名歌曲推断相同文件；同名或同 title 条目缺少匹配的服务端 MD5 时，以 `CLOUD_EXISTING_UNVERIFIABLE` 停止，不盲目重复上传；需要手动检查或选择明确不同的名称。上传后的回读失败会携带已知 ID，表示结果未确认：先检查 `ncm library cloud`，再决定是否重试。客户端等待上限为 15 分钟；超时不会撤销已经开始的上传，请勿立即重复提交。此命令不会自动创建歌单或加入歌单，歌单操作需要单独执行。
+
+本地检查和离线桩测试不代表账号认证、真实上传、私密歌单或实际播放已验收。

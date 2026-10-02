@@ -1279,6 +1279,14 @@ export class PlayerDaemon {
       }
       case 'library.cloud':
         return this.api.cloudSongs()
+      case 'library.cloud.upload':
+        return this.api.uploadCloud({
+          file: stringParam(params.file, 'file'),
+          name: params.name === undefined ? undefined : stringParam(params.name, 'name'),
+          title: params.title === undefined ? undefined : stringParam(params.title, 'title'),
+          dryRun: params.dryRun === true,
+          ffmpegPath: this.config.binaries.ffmpeg,
+        })
       case 'library.cloud.play':
         return this.playCloud(params.index === undefined ? 0 : numberParam(params.index, 'index'))
       case 'library.albums':

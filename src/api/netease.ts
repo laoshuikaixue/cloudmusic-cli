@@ -1,3 +1,5 @@
+import { prepareCloudUpload, type CloudUploadOptions } from '../core/cloud-upload.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createRequire } from 'node:module'
 import { AppError, describeSourceFailure, SourceUnavailableError } from '../core/errors.js'
 import { qualityChain } from '../core/config.js'
@@ -74,29 +76,24 @@ const toSafeText = (value: unknown): string => {
   return stringify(value)
 }
 
-const withStdoutGuard = async <T>(operation: () => Promise<T>): Promise<T> => {
-  const originals: [typeof console.log, typeof console.info, typeof console.warn] = [
-    console.log,
-    console.info,
-    console.warn,
-  ]
+const quietGuard = new AsyncLocalStorage<boolean>()
+const guardedMethods = ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir'] as const
+let originalConsole: Map<(typeof guardedMethods)[number], (...args: any[]) => void>
+const withStdoutGuard = async <T>(operation: () => Promise<T>, quiet = false): Promise<T> => {
   if (stdoutGuardDepth === 0) {
+    originalConsole = new Map(guardedMethods.map((key) => [key, console[key]]))
     const write = (...args: unknown[]) => {
-      process.stderr.write(`${args.map(toSafeText).join(' ')}\n`)
+      if (!quietGuard.getStore()) process.stderr.write(`${args.map(toSafeText).join(' ')}\n`)
     }
-    console.log = write
-    console.info = write
-    console.warn = write
+    for (const key of guardedMethods) console[key] = write
   }
   stdoutGuardDepth += 1
   try {
-    return await operation()
+    return await (quiet ? quietGuard.run(true, operation) : operation())
   } finally {
     stdoutGuardDepth -= 1
     if (stdoutGuardDepth === 0) {
-      console.log = originals[0]
-      console.info = originals[1]
-      console.warn = originals[2]
+      for (const key of guardedMethods) console[key] = originalConsole.get(key)!
     }
   }
 }
@@ -212,12 +209,18 @@ export class NeteaseApi {
     await initializePromise
   }
 
-  private async call<T = any>(name: string, params: Record<string, unknown> = {}): Promise<T> {
+  private async call<T = any>(
+    name: string,
+    params: Record<string, unknown> = {},
+    auth?: { cookie: string; requireCurrentCookie?: boolean },
+  ): Promise<T> {
     const fn = api[name]
     if (typeof fn !== 'function') throw new AppError('API_NOT_FOUND', `API 不支持 ${name}`)
     await this.initialize()
+    if (auth?.requireCurrentCookie && this.getCookie() !== auth.cookie)
+      throw new AppError('AUTH_CHANGED', '认证在上传期间发生变化，请重新检查登录后再上传')
     try {
-      const cookie = this.getCookie()
+      const cookie = auth?.cookie ?? this.getCookie()
       return await withStdoutGuard(async () =>
         bodyOf<T>(await fn({ ...params, ...(cookie ? { cookie } : {}) })),
       )
@@ -842,6 +845,137 @@ export class NeteaseApi {
     const uid = await this.currentUserId()
     const result = await this.call<any>('likelist', { uid, timestamp: Date.now() })
     return (result?.ids || []).map(Number).filter(Number.isFinite)
+  }
+
+  private cloudUploadInProgress = false
+
+  async uploadCloud(options: CloudUploadOptions) {
+    if (this.cloudUploadInProgress)
+      throw new AppError('CLOUD_UPLOAD_BUSY', '已有云盘上传正在执行，请等待完成')
+    this.cloudUploadInProgress = true
+    try {
+      return await this.uploadCloudInternal(options)
+    } finally {
+      this.cloudUploadInProgress = false
+    }
+  }
+
+  private async uploadCloudInternal(options: CloudUploadOptions) {
+    const cookie = options.dryRun ? '' : this.getCookie()
+    const { data, plan } = await prepareCloudUpload(options)
+    if (options.dryRun) return { ...plan, networkCalled: false, authenticationRead: false }
+    if (!cookie.trim()) throw new AppError('AUTH_REQUIRED', '需要先通过 ncm login 登录网易云账号')
+    return withStdoutGuard(async () => {
+      // Upstream upload errors/logs may contain upload tokens, cookies and signed URLs.
+      // Never return raw upstream messages or response objects from this operation.
+      const safeCall = async (name: string, params: Record<string, unknown> = {}) => {
+        const mutation = name === 'cloud'
+        if (mutation && this.getCookie() !== cookie)
+          throw new AppError('AUTH_CHANGED', '认证在上传期间发生变化，请重新检查登录后再上传')
+        try {
+          const body = await this.call<any>(
+            name,
+            { ...params, timestamp: Date.now() },
+            {
+              cookie,
+              requireCurrentCookie: mutation,
+            },
+          )
+          if (Number(body?.code ?? body?.data?.code) !== 200) throw new Error('rejected')
+          return body
+        } catch (error) {
+          if (error instanceof AppError && error.code === 'AUTH_CHANGED')
+            throw new AppError('AUTH_CHANGED', '认证在上传期间发生变化，请重新检查登录后再上传')
+          throw new AppError(
+            'CLOUD_REQUEST_FAILED',
+            `${name} 请求失败，请检查登录与网络；上传后失败时请先检查云盘再重试`,
+          )
+        }
+      }
+      const status = await safeCall('login_status')
+      if (!(Number(status?.data?.profile?.userId || status?.profile?.userId) > 0))
+        throw new AppError('AUTH_REQUIRED', '登录已失效，请通过 ncm login 重新登录')
+      const list = async () => {
+        const rows: any[] = []
+        let capacity = { size: 0, maxSize: 0 }
+        for (let offset = 0; offset < 100_000; offset += 200) {
+          const body = await safeCall('user_cloud', { limit: 200, offset })
+          if (!Array.isArray(body.data))
+            throw new AppError('CLOUD_READBACK_FAILED', '云盘返回了无效的条目列表')
+          rows.push(...body.data)
+          capacity = { size: Number(body.size), maxSize: Number(body.maxSize) }
+          if (!body.hasMore) return { rows, capacity }
+        }
+        throw new AppError('CLOUD_PAGINATION_LIMIT', '云盘分页超过限制')
+      }
+      const idOf = (row: any) => Number(row.songId ?? row.simpleSong?.id)
+      const trackIdOf = (row: any) => Number(row.simpleSong?.id ?? row.songId)
+      const validId = (id: number) => Number.isSafeInteger(id) && id > 0
+      const before = await list()
+      const existing = before.rows.filter(
+        (row) =>
+          String(row.md5 ?? row.fileMd5 ?? row.simpleSong?.md5 ?? '').toLowerCase() === plan.md5,
+      )
+      if (existing.length > 1)
+        throw new AppError('CLOUD_DUPLICATE_AMBIGUOUS', '相同 MD5 对应多个云盘条目，请手动检查')
+      const resultOf = (row: any, repeated: boolean) => {
+        const songId = idOf(row)
+        const trackId = trackIdOf(row)
+        if (!validId(songId) || !validId(trackId))
+          throw new AppError('CLOUD_READBACK_FAILED', '云盘未返回有效歌曲 ID')
+        const title = String(row.songName ?? row.simpleSong?.name ?? '')
+        if (title !== plan.title)
+          throw new AppError(
+            'CLOUD_TITLE_MISMATCH',
+            '云盘 title 与本地计划不一致，请先检查云盘再重试',
+            { songId, trackId },
+          )
+        return { ...plan, songId, trackId, title, repeated, verified: true }
+      }
+      if (existing.length) return resultOf(existing[0], true)
+      if (
+        before.rows.some(
+          (row) =>
+            row.fileName === plan.name ||
+            row.songName === plan.title ||
+            row.simpleSong?.name === plan.title,
+        )
+      ) {
+        throw new AppError(
+          'CLOUD_EXISTING_UNVERIFIABLE',
+          '云盘已有同名或同 title 条目，但无法用 MD5 证明是同一文件；请手动检查后使用明确不同的名称',
+        )
+      }
+      if (!Number.isFinite(before.capacity.size) || !(before.capacity.maxSize > 0))
+        throw new AppError('CLOUD_CAPACITY_UNVERIFIED', '无法确认云盘剩余空间')
+      if (before.capacity.maxSize - before.capacity.size < data.length)
+        throw new AppError('CLOUD_CAPACITY_INSUFFICIENT', '云盘剩余空间不足')
+      const uploaded = await safeCall('cloud', {
+        songFile: {
+          name: Buffer.from(plan.name, 'utf8').toString('latin1'),
+          data,
+          mimetype: plan.mimetype,
+        },
+      })
+      const songId = Number(uploaded.privateCloud?.songId ?? uploaded.songId)
+      if (!validId(songId))
+        throw new AppError('CLOUD_UPLOAD_ID_MISSING', '上传返回了无效 ID；请检查云盘后再重试')
+      try {
+        const after = await list()
+        const row = after.rows.find((item) => idOf(item) === songId)
+        if (!row) throw new AppError('CLOUD_READBACK_FAILED', '云盘回读未确认')
+        return resultOf(row, false)
+      } catch (error) {
+        const titleMismatch = error instanceof AppError && error.code === 'CLOUD_TITLE_MISMATCH'
+        throw new AppError(
+          titleMismatch ? 'CLOUD_TITLE_MISMATCH' : 'CLOUD_READBACK_FAILED',
+          titleMismatch
+            ? '上传已返回 ID，但云盘 title 与本地计划不一致；请先检查云盘再重试'
+            : '上传已返回 ID，但云盘回读未确认；请先检查云盘再重试',
+          { songId },
+        )
+      }
+    }, true)
   }
 
   async cloudSongs(): Promise<CloudLibrary> {

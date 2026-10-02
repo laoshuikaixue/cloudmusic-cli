@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander'
+import { resolve } from 'node:path'
+import { prepareCloudUpload } from './core/cloud-upload.js'
 import {
   ensureDaemon,
   isDaemonConnectionError,
@@ -788,6 +790,26 @@ library
       }),
     ),
   )
+library
+  .command('cloud-upload <file>')
+  .description('上传本地音频到音乐云盘（保留原文件）')
+  .option('--dry-run', '仅检查本地文件，不读取认证或连接网络')
+  .option('--name <name>', '云盘文件名，必须保留原扩展名')
+  .option('--title <title>', 'MP3 title 标签（通过 FFmpeg 修改独立临时副本）')
+  .action(async (file, options) => {
+    const params = {
+      file: resolve(file),
+      name: options.name,
+      title: options.title,
+      dryRun: options.dryRun,
+    }
+    if (options.dryRun) {
+      const { plan } = await prepareCloudUpload(params)
+      return output({ ...plan, networkCalled: false, authenticationRead: false })
+    }
+    await ensureDaemon()
+    output(await requestDaemon('library.cloud.upload', params, 15 * 60_000))
+  })
 library.command('albums').action(async () => output(await withDaemon('library.albums')))
 library
   .command('album <id>')
